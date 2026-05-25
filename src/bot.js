@@ -1,5 +1,5 @@
 const { STATES } = require('./states');
-const { EVENT_TYPES } = require('./constants');
+const { EVENT_TYPES, VIOLATION_TYPES } = require('./constants');
 const {
   grantAccessByPassword,
   hasConfiguredPasswords,
@@ -62,6 +62,7 @@ const {
   askItem,
   askMissedReason,
   askPhoto,
+  askViolationType,
   showConfirm
 } = require('./flows/reportFlow');
 const { savePhotoFromUpdate } = require('./photos');
@@ -81,6 +82,14 @@ function buildPhotoPreviewFormula(photoUrl) {
   return `=IMAGE("${escapeSheetsFormulaText(photoUrl)}")`;
 }
 
+function formatEventTypeForSheet(data) {
+  if (data.eventType === EVENT_TYPES.VIOLATION && data.violationType) {
+    return `${data.eventType}: ${data.violationType}`;
+  }
+
+  return data.eventType;
+}
+
 function buildSheetRow(profile, data) {
   return [
     profile.fio,
@@ -88,7 +97,7 @@ function buildSheetRow(profile, data) {
     data.shop || '',
     data.date,
     data.item,
-    data.eventType,
+    formatEventTypeForSheet(data),
     data.eventType === EVENT_TYPES.THEFT ? data.amount : '',
     data.eventType === EVENT_TYPES.MISSED_THEFT ? data.amount : '',
     data.eventType === EVENT_TYPES.VIOLATION ? data.amount : '',
@@ -108,6 +117,7 @@ function buildSavedSummary(profile, data) {
     `Дата: ${data.date}`,
     `Наименование товара: ${data.item}`,
     `Тип фиксации: ${data.eventType}`,
+    ...(data.violationType ? [`Вид нарушения: ${data.violationType}`] : []),
     `Сумма: ${data.amount} руб.`
   ];
 
@@ -206,11 +216,20 @@ async function handleFormBack(chatId, userId, session) {
       return;
 
     case STATES.AWAIT_EVENT_TYPE:
-      await askItem(chatId, userId, omitFormFields(session.data, ['item', 'eventType', 'amount']));
+      await askItem(chatId, userId, omitFormFields(session.data, ['item', 'eventType', 'violationType', 'amount']));
+      return;
+
+    case STATES.AWAIT_VIOLATION_TYPE:
+      await askEventType(chatId, userId, omitFormFields(session.data, ['eventType', 'violationType', 'amount']));
       return;
 
     case STATES.AWAIT_AMOUNT:
-      await askEventType(chatId, userId, omitFormFields(session.data, ['eventType', 'amount']));
+      if (session.data.eventType === EVENT_TYPES.VIOLATION) {
+        await askViolationType(chatId, userId, omitFormFields(session.data, ['violationType', 'amount']));
+        return;
+      }
+
+      await askEventType(chatId, userId, omitFormFields(session.data, ['eventType', 'violationType', 'amount']));
       return;
 
     case STATES.AWAIT_PHOTO:
@@ -378,7 +397,37 @@ async function handleCallback(update, chatId, userId, session) {
 
     await deleteCallbackMessage(update);
     await sendMessage(chatId, `Тип фиксации: ${eventType}`);
+    if (eventType === EVENT_TYPES.VIOLATION) {
+      await askViolationType(chatId, userId, { ...session.data, eventType });
+      return;
+    }
+
     await askAmount(chatId, userId, { ...session.data, eventType });
+    return;
+  }
+
+  if (payload.startsWith('violation_type_')) {
+    if (!session || session.state !== STATES.AWAIT_VIOLATION_TYPE) {
+      await askViolationType(chatId, userId, session?.data || {});
+      return;
+    }
+
+    const violationTypeByPayload = {
+      violation_type_shortage: VIOLATION_TYPES.SHORTAGE,
+      violation_type_overcharge: VIOLATION_TYPES.OVERCHARGE,
+      violation_type_bag: VIOLATION_TYPES.BAG,
+      violation_type_container: VIOLATION_TYPES.CONTAINER
+    };
+    const violationType = violationTypeByPayload[payload];
+
+    if (!violationType) {
+      await askViolationType(chatId, userId, session.data);
+      return;
+    }
+
+    await deleteCallbackMessage(update);
+    await sendMessage(chatId, `Вид нарушения: ${violationType}`);
+    await askAmount(chatId, userId, { ...session.data, violationType });
     return;
   }
 
@@ -529,6 +578,12 @@ async function handleText(update, chatId, userId, session) {
       await deleteStoredKeyboard(userId);
       await cleanupMessages(userId);
       await askEventType(chatId, userId, session.data);
+      return;
+
+    case STATES.AWAIT_VIOLATION_TYPE:
+      await deleteStoredKeyboard(userId);
+      await cleanupMessages(userId);
+      await askViolationType(chatId, userId, session.data);
       return;
 
     case STATES.AWAIT_AMOUNT: {

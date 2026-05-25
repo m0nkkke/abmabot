@@ -1,4 +1,4 @@
-const { EVENT_TYPES } = require('../constants');
+const { EVENT_TYPES, VIOLATION_TYPES } = require('../constants');
 const { getProfile, saveSession } = require('../db');
 const { inlineKeyboard } = require('../keyboards');
 const { STATES } = require('../states');
@@ -50,7 +50,25 @@ async function askEventType(chatId, userId, data = {}) {
 
 async function askAmount(chatId, userId, data = {}) {
     saveSession(userId, STATES.AWAIT_AMOUNT, data);
-    await sendCleanupMessage(chatId, userId, `Введите сумму для типа «${data.eventType}» (руб):`, backKeyboard());
+    const eventLabel = data.violationType ? `${data.eventType}: ${data.violationType}` : data.eventType;
+    await sendCleanupMessage(chatId, userId, `Введите сумму для типа «${eventLabel}» (руб):`, backKeyboard());
+}
+
+async function askViolationType(chatId, userId, data = {}) {
+  await removeStoredKeyboard(userId);
+  saveSession(userId, STATES.AWAIT_VIOLATION_TYPE, data);
+  await sendKeyboardMessage(
+    chatId,
+    userId,
+    'Выберите вид нарушения:',
+    inlineKeyboard([
+      [{ text: VIOLATION_TYPES.SHORTAGE, type: 'callback', payload: 'violation_type_shortage' }],
+      [{ text: VIOLATION_TYPES.OVERCHARGE, type: 'callback', payload: 'violation_type_overcharge' }],
+      [{ text: VIOLATION_TYPES.BAG, type: 'callback', payload: 'violation_type_bag' }],
+      [{ text: VIOLATION_TYPES.CONTAINER, type: 'callback', payload: 'violation_type_container' }],
+      backButtonRow()
+    ])
+  );
 }
 
 async function askPhoto(chatId, userId, data = {}) {
@@ -73,6 +91,7 @@ function buildSummary(profile, data) {
         `Дата: ${data.date}`,
         `Наименование товара: ${data.item}`,
         `Тип фиксации: ${data.eventType}`,
+        ...(data.violationType ? [`Вид нарушения: ${data.violationType}`] : []),
         `Сумма: ${data.amount} руб.`
     ];
 
@@ -125,6 +144,7 @@ module.exports = {
     askItem,
     askPhoto,
     askMissedReason,
+    askViolationType,
     buildSummary,
     showConfirm
 };

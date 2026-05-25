@@ -17,6 +17,13 @@ const EVENT_TYPES = {
   VIOLATION: 'Нарушение'
 };
 
+const VIOLATION_TYPES = {
+  SHORTAGE: 'Недобитие',
+  OVERCHARGE: 'Перебитие',
+  BAG: 'Пакет',
+  CONTAINER: 'Контейнер'
+};
+
 const BOT_COMMANDS = [
   { name: 'start', description: 'Начать работу с ботом' },
   { name: 'id', description: 'Показать мой MAX user_id' },
@@ -39,5 +46,6 @@ module.exports = {
   CONSENT_VERSION,
   ROLES,
   EVENT_TYPES,
+  VIOLATION_TYPES,
   BOT_COMMANDS
 };
