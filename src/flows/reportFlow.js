@@ -66,6 +66,7 @@ async function askViolationType(chatId, userId, data = {}) {
       [{ text: VIOLATION_TYPES.OVERCHARGE, type: 'callback', payload: 'violation_type_overcharge' }],
       [{ text: VIOLATION_TYPES.BAG, type: 'callback', payload: 'violation_type_bag' }],
       [{ text: VIOLATION_TYPES.CONTAINER, type: 'callback', payload: 'violation_type_container' }],
+      [{ text: VIOLATION_TYPES.RESORT, type: 'callback', payload: 'violation_type_resort' }],
       backButtonRow()
     ])
   );

@@ -446,7 +446,8 @@ async function handleCallback(update, chatId, userId, session) {
       violation_type_shortage: VIOLATION_TYPES.SHORTAGE,
       violation_type_overcharge: VIOLATION_TYPES.OVERCHARGE,
       violation_type_bag: VIOLATION_TYPES.BAG,
-      violation_type_container: VIOLATION_TYPES.CONTAINER
+      violation_type_container: VIOLATION_TYPES.CONTAINER,
+      violation_type_resort: VIOLATION_TYPES.RESORT
     };
     const violationType = violationTypeByPayload[payload];
 

@@ -22,7 +22,8 @@ const VIOLATION_TYPES = {
   SHORTAGE: 'Недобитие',
   OVERCHARGE: 'Перебитие',
   BAG: 'Пакет',
-  CONTAINER: 'Контейнер'
+  CONTAINER: 'Контейнер',
+  RESORT: 'Пересорт'
 };
 
 const BOT_COMMANDS = [
