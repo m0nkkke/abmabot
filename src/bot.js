@@ -1,5 +1,5 @@
 const { STATES } = require('./states');
-const { EVENT_TYPES, VIOLATION_TYPES } = require('./constants');
+const { EVENT_TYPES, MAX_PHOTOS_PER_RECORD, VIOLATION_TYPES } = require('./constants');
 const {
   grantAccessByPassword,
   hasConfiguredPasswords,
@@ -82,6 +82,35 @@ function buildPhotoPreviewFormula(photoUrl) {
   return `=IMAGE("${escapeSheetsFormulaText(photoUrl)}")`;
 }
 
+function getPhotos(data) {
+  if (Array.isArray(data.photos)) {
+    return data.photos;
+  }
+
+  if (data.photoUrl) {
+    return [{
+      photoUrl: data.photoUrl,
+      photoFileName: data.photoFileName,
+      photoAttachmentPayload: data.photoAttachmentPayload
+    }];
+  }
+
+  return [];
+}
+
+function buildPhotoCells(data) {
+  const photos = getPhotos(data).slice(0, MAX_PHOTOS_PER_RECORD);
+  const cells = [];
+
+  for (let index = 0; index < MAX_PHOTOS_PER_RECORD; index += 1) {
+    const photo = photos[index];
+    cells.push(buildPhotoPreviewFormula(photo?.photoUrl));
+    cells.push(photo?.photoUrl || '');
+  }
+
+  return cells;
+}
+
 function formatEventTypeForSheet(data) {
   if (data.eventType === EVENT_TYPES.VIOLATION && data.violationType) {
     return `${data.eventType}: ${data.violationType}`;
@@ -102,8 +131,7 @@ function buildSheetRow(profile, data) {
     data.eventType === EVENT_TYPES.MISSED_THEFT ? data.amount : '',
     data.eventType === EVENT_TYPES.VIOLATION ? data.amount : '',
     data.missedReason || '',
-    buildPhotoPreviewFormula(data.photoUrl),
-    data.photoUrl || ''
+    ...buildPhotoCells(data)
   ];
 }
 
@@ -118,6 +146,7 @@ function buildSavedSummary(profile, data) {
     `Наименование товара: ${data.item}`,
     `Тип фиксации: ${data.eventType}`,
     ...(data.violationType ? [`Вид нарушения: ${data.violationType}`] : []),
+    `Фото: ${getPhotos(data).length}`,
     `Сумма: ${data.amount} руб.`
   ];
 
@@ -133,12 +162,13 @@ function buildSavedSummaryAttachments(data) {
     [{ text: '+ Новая запись', type: 'callback', payload: 'new_record' }]
   ]);
 
-  if (data.photoAttachmentPayload) {
-    attachments.unshift({
+  const photoAttachments = getPhotos(data)
+    .filter((photo) => photo.photoAttachmentPayload)
+    .map((photo) => ({
       type: 'image',
-      payload: data.photoAttachmentPayload
-    });
-  }
+      payload: photo.photoAttachmentPayload
+    }));
+  attachments.unshift(...photoAttachments);
 
   return attachments;
 }
@@ -236,7 +266,7 @@ async function handleFormBack(chatId, userId, session) {
       await askAmount(
         chatId,
         userId,
-        omitFormFields(session.data, ['amount', 'photoUrl', 'photoFileName', 'photoAttachmentPayload', 'missedReason'])
+        omitFormFields(session.data, ['amount', 'photos', 'photoUrl', 'photoFileName', 'photoAttachmentPayload', 'missedReason'])
       );
       return;
 
@@ -253,7 +283,7 @@ async function handleFormBack(chatId, userId, session) {
       await askPhoto(
         chatId,
         userId,
-        omitFormFields(session.data, ['photoUrl', 'photoFileName', 'photoAttachmentPayload'])
+        session.data
       );
       return;
 
@@ -431,6 +461,33 @@ async function handleCallback(update, chatId, userId, session) {
     return;
   }
 
+  if (payload === 'photo_done') {
+    if (!session || session.state !== STATES.AWAIT_PHOTO) {
+      await askPhoto(chatId, userId, session?.data || {});
+      return;
+    }
+
+    const photos = getPhotos(session.data);
+    if (!photos.length) {
+      await sendMessage(chatId, 'Нужно отправить хотя бы одно фото.');
+      await askPhoto(chatId, userId, session.data);
+      return;
+    }
+
+    await deleteCallbackMessage(update);
+    const data = { ...session.data, photos };
+
+    if (data.eventType === EVENT_TYPES.MISSED_THEFT) {
+      await askMissedReason(chatId, userId, data);
+      return;
+    }
+
+    if (!(await showConfirm(chatId, userId, data))) {
+      await startOnboarding(chatId, userId);
+    }
+    return;
+  }
+
   if (payload === 'restart_form') {
     await deleteCallbackMessage(update);
     await showRegionPage(chatId, userId, {});
@@ -603,6 +660,14 @@ async function handleText(update, chatId, userId, session) {
     }
 
     case STATES.AWAIT_PHOTO: {
+      const existingPhotos = getPhotos(session.data);
+      if (existingPhotos.length >= MAX_PHOTOS_PER_RECORD) {
+        await cleanupMessages(userId);
+        await sendMessage(chatId, `Уже загружено максимальное количество фото: ${MAX_PHOTOS_PER_RECORD}. Нажмите «Готово».`);
+        await askPhoto(chatId, userId, { ...session.data, photos: existingPhotos });
+        return;
+      }
+
       let photo;
       try {
         photo = await savePhotoFromUpdate(update, userId);
@@ -623,22 +688,35 @@ async function handleText(update, chatId, userId, session) {
 
       const data = {
         ...session.data,
-        photoUrl: photo.url,
-        photoFileName: photo.fileName,
-        photoAttachmentPayload: photo.messageImagePayload
+        photos: [
+          ...existingPhotos,
+          {
+            photoUrl: photo.url,
+            photoFileName: photo.fileName,
+            photoAttachmentPayload: photo.messageImagePayload
+          }
+        ]
       };
+      delete data.photoUrl;
+      delete data.photoFileName;
+      delete data.photoAttachmentPayload;
 
       await cleanupMessages(userId);
-      await sendMessage(chatId, 'Фото: получено');
+      await sendMessage(chatId, `Фото получено: ${data.photos.length}/${MAX_PHOTOS_PER_RECORD}`);
 
-      if (data.eventType === EVENT_TYPES.MISSED_THEFT) {
-        await askMissedReason(chatId, userId, data);
+      if (data.photos.length >= MAX_PHOTOS_PER_RECORD) {
+        if (data.eventType === EVENT_TYPES.MISSED_THEFT) {
+          await askMissedReason(chatId, userId, data);
+          return;
+        }
+
+        if (!(await showConfirm(chatId, userId, data))) {
+          await startOnboarding(chatId, userId);
+        }
         return;
       }
 
-      if (!(await showConfirm(chatId, userId, data))) {
-        await startOnboarding(chatId, userId);
-      }
+      await askPhoto(chatId, userId, data);
       return;
     }
 

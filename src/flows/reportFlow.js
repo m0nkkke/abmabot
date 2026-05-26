@@ -1,4 +1,4 @@
-const { EVENT_TYPES, VIOLATION_TYPES } = require('../constants');
+const { EVENT_TYPES, MAX_PHOTOS_PER_RECORD, VIOLATION_TYPES } = require('../constants');
 const { getProfile, saveSession } = require('../db');
 const { inlineKeyboard } = require('../keyboards');
 const { STATES } = require('../states');
@@ -73,7 +73,20 @@ async function askViolationType(chatId, userId, data = {}) {
 
 async function askPhoto(chatId, userId, data = {}) {
     saveSession(userId, STATES.AWAIT_PHOTO, data);
-    await sendCleanupMessage(chatId, userId, 'Отправьте фото фиксации одним сообщением.', backKeyboard());
+    const photoCount = Array.isArray(data.photos) ? data.photos.length : 0;
+    const buttons = [];
+
+    if (photoCount > 0) {
+      buttons.push([{ text: 'Готово', type: 'callback', payload: 'photo_done' }]);
+    }
+    buttons.push(backButtonRow());
+
+    await sendCleanupMessage(
+      chatId,
+      userId,
+      `Отправьте фото фиксации. Можно загрузить от 1 до ${MAX_PHOTOS_PER_RECORD} фото по одному сообщению.\nПолучено: ${photoCount}/${MAX_PHOTOS_PER_RECORD}.`,
+      inlineKeyboard(buttons)
+    );
 }
 
 async function askMissedReason(chatId, userId, data = {}) {
@@ -92,6 +105,7 @@ function buildSummary(profile, data) {
         `Наименование товара: ${data.item}`,
         `Тип фиксации: ${data.eventType}`,
         ...(data.violationType ? [`Вид нарушения: ${data.violationType}`] : []),
+        `Фото: ${Array.isArray(data.photos) ? data.photos.length : 0}`,
         `Сумма: ${data.amount} руб.`
     ];
 
@@ -120,12 +134,13 @@ async function showConfirm(chatId, userId, data) {
     ]
   ]);
 
-  if (data.photoAttachmentPayload) {
-    attachments.unshift({
+  const photoAttachments = (Array.isArray(data.photos) ? data.photos : [])
+    .filter((photo) => photo.photoAttachmentPayload)
+    .map((photo) => ({
       type: 'image',
-      payload: data.photoAttachmentPayload
-    });
-  }
+      payload: photo.photoAttachmentPayload
+    }));
+  attachments.unshift(...photoAttachments);
 
     await sendKeyboardMessage(
         chatId,

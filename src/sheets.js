@@ -1,9 +1,10 @@
 const { google } = require('googleapis');
+const { MAX_PHOTOS_PER_RECORD } = require('./constants');
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const CREDENTIALS_PATH = process.env.GOOGLE_CREDENTIALS_PATH || './credentials/service-account.json';
 const DATA_SHEET_NAME = 'Данные';
-const HEADERS = [
+const BASE_HEADERS = [
   'ФИО',
   'Регион',
   'Магазин',
@@ -13,13 +14,19 @@ const HEADERS = [
   'Сумма кражи',
   'Сумма у. кражи',
   'Сумма нарушения',
-  'Причина упущенной кражи',
-  'Фото',
-  'Ссылка на фото'
+  'Причина упущенной кражи'
 ];
-const HEADER_RANGE = 'A1:L1';
+const PHOTO_HEADERS = Array.from({ length: MAX_PHOTOS_PER_RECORD }, (_, index) => {
+  const photoNumber = index + 1;
+  return [`Фото ${photoNumber}`, `Ссылка на фото ${photoNumber}`];
+}).flat();
+const HEADERS = [...BASE_HEADERS, ...PHOTO_HEADERS];
+const HEADER_END_COLUMN = columnNameByIndex(HEADERS.length);
+const DATA_RANGE = `A:${HEADER_END_COLUMN}`;
+const HEADER_RANGE = `A1:${HEADER_END_COLUMN}1`;
 const GOOGLE_REQUEST_TIMEOUT_MS = Number(process.env.GOOGLE_REQUEST_TIMEOUT_MS || 20000);
 const MIN_EXTRA_ROWS = 1000;
+const MIN_EXTRA_COLUMNS = 5;
 
 let sheetsClient;
 
@@ -67,6 +74,19 @@ function withTimeout(promise, stepName) {
 
 function escapeSheetName(name) {
   return String(name).replace(/'/g, "''");
+}
+
+function columnNameByIndex(index) {
+  let number = index;
+  let name = '';
+
+  while (number > 0) {
+    const remainder = (number - 1) % 26;
+    name = String.fromCharCode(65 + remainder) + name;
+    number = Math.floor((number - 1) / 26);
+  }
+
+  return name;
 }
 
 function getSheetsClient() {
@@ -124,6 +144,8 @@ async function ensureShopSheet(sheets, shop) {
     );
   }
 
+  await ensureSheetGridSize(sheets, shop, 1, HEADERS.length);
+
   const headerResponse = await withTimeout(
     sheets.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
@@ -143,7 +165,7 @@ async function ensureShopSheet(sheets, shop) {
   await withTimeout(
     sheets.spreadsheets.values.clear({
       spreadsheetId: SHEET_ID,
-      range: `'${escapeSheetName(shop)}'!A1:Z1`
+      range: `'${escapeSheetName(shop)}'!${HEADER_RANGE}`
     }, {
       timeout: GOOGLE_REQUEST_TIMEOUT_MS
     }),
@@ -200,19 +222,23 @@ async function getSheetProperties(sheets, sheetName) {
   return sheet.properties;
 }
 
-async function ensureSheetHasRows(sheets, sheetName, minRows) {
+async function ensureSheetGridSize(sheets, sheetName, minRows, minColumns = HEADERS.length) {
   const properties = await getSheetProperties(sheets, sheetName);
   const rowCount = properties.gridProperties?.rowCount || 0;
+  const columnCount = properties.gridProperties?.columnCount || 0;
 
-  if (rowCount >= minRows) {
+  if (rowCount >= minRows && columnCount >= minColumns) {
     return;
   }
 
-  const targetRows = minRows + MIN_EXTRA_ROWS;
+  const targetRows = rowCount >= minRows ? rowCount : minRows + MIN_EXTRA_ROWS;
+  const targetColumns = columnCount >= minColumns ? columnCount : minColumns + MIN_EXTRA_COLUMNS;
   log('Google Sheets: расширяем лист перед записью.', {
     sheetName,
     currentRows: rowCount,
-    targetRows
+    currentColumns: columnCount,
+    targetRows,
+    targetColumns
   });
 
   await withTimeout(
@@ -225,10 +251,11 @@ async function ensureSheetHasRows(sheets, sheetName, minRows) {
               properties: {
                 sheetId: properties.sheetId,
                 gridProperties: {
-                  rowCount: targetRows
+                  rowCount: targetRows,
+                  columnCount: targetColumns
                 }
               },
-              fields: 'gridProperties.rowCount'
+              fields: 'gridProperties.rowCount,gridProperties.columnCount'
             }
           }
         ]
@@ -236,7 +263,7 @@ async function ensureSheetHasRows(sheets, sheetName, minRows) {
     }, {
       timeout: GOOGLE_REQUEST_TIMEOUT_MS
     }),
-    `расширение листа ${sheetName} до ${targetRows} строк`
+    `расширение листа ${sheetName} до ${targetRows} строк и ${targetColumns} колонок`
   );
 }
 
@@ -245,7 +272,7 @@ async function writeRowToNextFreeLine(sheets, sheetName, row) {
   const valuesResponse = await withTimeout(
     sheets.spreadsheets.values.get({
       spreadsheetId: SHEET_ID,
-      range: `'${escapedSheetName}'!A:L`,
+      range: `'${escapedSheetName}'!${DATA_RANGE}`,
       majorDimension: 'ROWS'
     }, {
       timeout: GOOGLE_REQUEST_TIMEOUT_MS
@@ -254,13 +281,13 @@ async function writeRowToNextFreeLine(sheets, sheetName, row) {
   );
 
   const nextRow = findNextDataRow(valuesResponse.data.values);
-  await ensureSheetHasRows(sheets, sheetName, nextRow);
+  await ensureSheetGridSize(sheets, sheetName, nextRow, HEADERS.length);
   log('Google Sheets: записываем строку в явный диапазон.', { sheetName, row: nextRow });
 
   await withTimeout(
     sheets.spreadsheets.values.update({
       spreadsheetId: SHEET_ID,
-      range: `'${escapedSheetName}'!A${nextRow}:L${nextRow}`,
+      range: `'${escapedSheetName}'!A${nextRow}:${HEADER_END_COLUMN}${nextRow}`,
       valueInputOption: 'USER_ENTERED',
       requestBody: {
         values: [row]

@@ -9,8 +9,8 @@ function validateShop(shop, index) {
     throw new Error(`У магазина с индексом ${index} не заполнено поле name`);
   }
 
-  if (!shop.address || typeof shop.address !== 'string') {
-    throw new Error(`У магазина с индексом ${index} не заполнено поле address`);
+  if (typeof shop.address !== 'string') {
+    throw new Error(`У магазина с индексом ${index} поле address должно быть строкой`);
   }
 
   if (shop.region && typeof shop.region !== 'string') {
