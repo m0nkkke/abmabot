@@ -14,7 +14,7 @@ async function askTextReportFio(chatId, userId, data = {}) {
   await sendCleanupMessage(
     chatId,
     userId,
-    'Введите ФИО для отчета:',
+    'Добро пожаловать! Введите ваше ФИО:',
     inlineKeyboard([[{ text: '← В меню', type: 'callback', payload: 'main_menu' }]])
   );
 }
@@ -44,9 +44,9 @@ async function askTextReportText(chatId, userId, data = {}) {
   );
 }
 
-function buildTextReportRow(data) {
+function buildTextReportRow(profile, data) {
   return [
-    data.fio,
+    profile.fio,
     data.date,
     data.reportText
   ];

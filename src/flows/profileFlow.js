@@ -6,15 +6,21 @@ const { STATES } = require('../states');
 const { removeStoredKeyboard, sendKeyboardMessage } = require('./keyboardSession');
 
 async function showRegionPage(chatId, userId, data = {}) {
+  const buttons = REGIONS.map((region, index) => ([
+    { text: region, type: 'callback', payload: `region_${index}` }
+  ]));
+
+  if (!data.adminEditUserId) {
+    buttons.push([{ text: '← В меню', type: 'callback', payload: 'main_menu' }]);
+  }
+
   await removeStoredKeyboard(userId);
   saveSession(userId, STATES.AWAIT_REGION, data);
   await sendKeyboardMessage(
     chatId,
     userId,
     'Выберите регион:',
-    inlineKeyboard(REGIONS.map((region, index) => ([
-      { text: region, type: 'callback', payload: `region_${index}` }
-    ])))
+    inlineKeyboard(buttons)
   );
 }
 

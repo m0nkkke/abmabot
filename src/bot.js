@@ -212,7 +212,12 @@ async function startOnboarding(chatId, userId) {
   }
 
   saveSession(userId, STATES.AWAIT_FIO, {});
-  await sendCleanupMessage(chatId, userId, 'Добро пожаловать! Введите ваше ФИО:');
+  await sendCleanupMessage(
+    chatId,
+    userId,
+    'Добро пожаловать! Введите ваше ФИО:',
+    inlineKeyboard([[{ text: '← В меню', type: 'callback', payload: 'main_menu' }]])
+  );
 }
 
 async function startFlow(chatId, userId) {
@@ -245,7 +250,13 @@ async function startTextReportFlow(chatId, userId) {
     return;
   }
 
-  await askTextReportFio(chatId, userId, {});
+  const profile = getProfile(userId);
+  if (!profile) {
+    await askTextReportFio(chatId, userId, { continueToTextReport: true });
+    return;
+  }
+
+  await askTextReportDate(chatId, userId, {});
 }
 
 function isTextReportCommand(text) {
@@ -325,7 +336,12 @@ async function handleFormBack(chatId, userId, session) {
       return;
 
     case STATES.AWAIT_TEXT_REPORT_DATE:
-      await askTextReportFio(chatId, userId, omitFormFields(session.data, ['fio', 'date']));
+      if (session.data.continueToTextReport) {
+        await askTextReportFio(chatId, userId, omitFormFields(session.data, ['fio', 'date']));
+        return;
+      }
+
+      await showMainMenu(chatId, userId);
       return;
 
     case STATES.AWAIT_TEXT_REPORT_TEXT:
@@ -702,6 +718,7 @@ async function handleText(update, chatId, userId, session) {
       }
 
       await cleanupMessages(userId);
+      saveProfile(userId, text);
       const data = { ...session.data, fio: text };
       await sendMessage(chatId, `ФИО: ${text}`);
       await askTextReportDate(chatId, userId, data);
@@ -733,11 +750,18 @@ async function handleText(update, chatId, userId, session) {
       }
 
       const data = { ...session.data, reportText: text };
+      const profile = getProfile(userId);
+
+      if (!profile) {
+        await sendMessage(chatId, 'Профиль не найден. Введите ФИО ещё раз.');
+        await askTextReportFio(chatId, userId, { continueToTextReport: true });
+        return;
+      }
 
       try {
         await cleanupMessages(userId);
         await sendCleanupMessage(chatId, userId, 'Сохраняю отчет в Google Sheets, пожалуйста подождите...');
-        await appendTextReportRow(buildTextReportRow(data));
+        await appendTextReportRow(buildTextReportRow(profile, data));
         await cleanupMessages(userId);
         await showMainMenu(chatId, userId, '✅ Отчет сохранен!\n\nВыберите следующее действие:');
       } catch (error) {
