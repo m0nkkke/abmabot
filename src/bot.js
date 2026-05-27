@@ -9,10 +9,11 @@ const {
 const { inlineKeyboard } = require('./keyboards');
 const { log, logError } = require('./logger');
 const { buildHelpText } = require('./messages');
-const { sendMessage } = require('./maxClient');
+const { deleteMessage, sendMessage } = require('./maxClient');
 const {
   getChatId,
   getPayload,
+  getSentMessageId,
   getText,
   getUserId,
   isHelpRequest,
@@ -196,6 +197,47 @@ async function showMainMenu(chatId, userId, text = 'Выберите дейст�
   await sendKeyboardMessage(chatId, userId, text, buildMainMenuAttachments());
 }
 
+function uniqueIds(ids) {
+  return [...new Set(ids.filter(Boolean).map(String))];
+}
+
+async function sendFormMessage(chatId, data, text) {
+  const responseData = await sendMessage(chatId, text);
+  const messageId = getSentMessageId(responseData);
+
+  if (!messageId) {
+    return data;
+  }
+
+  return {
+    ...(data || {}),
+    formMessageIds: uniqueIds([...(data?.formMessageIds || []), messageId])
+  };
+}
+
+async function cleanupFormMessages(userId) {
+  const session = getSession(userId);
+  const messageIds = session?.data?.formMessageIds || [];
+
+  if (!session || !messageIds.length) {
+    return;
+  }
+
+  for (const messageId of uniqueIds(messageIds)) {
+    await deleteMessage(messageId);
+  }
+
+  const nextData = { ...session.data };
+  delete nextData.formMessageIds;
+  saveSession(userId, session.state, nextData);
+}
+
+async function cleanupInterruptedForm(userId) {
+  await deleteStoredKeyboard(userId);
+  await cleanupMessages(userId);
+  await cleanupFormMessages(userId);
+}
+
 async function sendUserId(chatId, userId) {
   await sendMessage(chatId, `Ваш MAX user_id: ${userId}\nПередайте этот ID администратору для добавления доступа.`);
 }
@@ -278,7 +320,7 @@ async function handleFormBack(chatId, userId, session) {
     return;
   }
 
-  await cleanupMessages(userId);
+  await cleanupInterruptedForm(userId);
 
   switch (session.state) {
     case STATES.AWAIT_SHOP_PAGE:
@@ -390,7 +432,7 @@ async function handleCallback(update, chatId, userId, session) {
   }
 
   if (payload === 'main_menu') {
-    await cleanupMessages(userId);
+    await cleanupInterruptedForm(userId);
     await showMainMenu(chatId, userId);
     return;
   }
@@ -440,8 +482,9 @@ async function handleCallback(update, chatId, userId, session) {
     }
 
     await deleteCallbackMessage(update);
-    await sendMessage(chatId, `Регион: ${region}`);
-    await showShopPage(chatId, userId, 0, { ...(session?.data || {}), region });
+    let data = { ...(session?.data || {}), region };
+    data = await sendFormMessage(chatId, data, `Регион: ${region}`);
+    await showShopPage(chatId, userId, 0, data);
     return;
   }
 
@@ -475,11 +518,11 @@ async function handleCallback(update, chatId, userId, session) {
     }
 
     await deleteCallbackMessage(update);
-    const data = { ...(session?.data || {}), region, shop: shopText };
+    let data = { ...(session?.data || {}), region, shop: shopText };
     if (session?.data?.fio && !getProfile(userId)) {
       saveProfile(userId, session.data.fio);
     }
-    await sendMessage(chatId, `Магазин: ${shopText}`);
+    data = await sendFormMessage(chatId, data, `Магазин: ${shopText}`);
     await askDate(chatId, userId, data);
     return;
   }
@@ -490,9 +533,9 @@ async function handleCallback(update, chatId, userId, session) {
       return;
     }
 
-    const data = { ...session.data, date: todayMskPlus5() };
+    let data = { ...session.data, date: todayMskPlus5() };
     await deleteCallbackMessage(update);
-    await sendMessage(chatId, `Дата отчета: ${data.date}`);
+    data = await sendFormMessage(chatId, data, `Дата отчета: ${data.date}`);
     await askTextReportText(chatId, userId, data);
     return;
   }
@@ -503,9 +546,9 @@ async function handleCallback(update, chatId, userId, session) {
       return;
     }
 
-    const data = { ...session.data, date: todayMskPlus5() };
+    let data = { ...session.data, date: todayMskPlus5() };
     await deleteCallbackMessage(update);
-    await sendMessage(chatId, `Дата: ${data.date}`);
+    data = await sendFormMessage(chatId, data, `Дата: ${data.date}`);
     await askItem(chatId, userId, data);
     return;
   }
@@ -529,13 +572,14 @@ async function handleCallback(update, chatId, userId, session) {
     }
 
     await deleteCallbackMessage(update);
-    await sendMessage(chatId, `Тип фиксации: ${eventType}`);
+    let nextData = { ...session.data, eventType };
+    nextData = await sendFormMessage(chatId, nextData, `Тип фиксации: ${eventType}`);
     if (eventType === EVENT_TYPES.VIOLATION) {
-      await askViolationType(chatId, userId, { ...session.data, eventType });
+      await askViolationType(chatId, userId, nextData);
       return;
     }
 
-    await askAmount(chatId, userId, { ...session.data, eventType });
+    await askAmount(chatId, userId, nextData);
     return;
   }
 
@@ -560,8 +604,9 @@ async function handleCallback(update, chatId, userId, session) {
     }
 
     await deleteCallbackMessage(update);
-    await sendMessage(chatId, `Вид нарушения: ${violationType}`);
-    await askAmount(chatId, userId, { ...session.data, violationType });
+    let nextData = { ...session.data, violationType };
+    nextData = await sendFormMessage(chatId, nextData, `Вид нарушения: ${violationType}`);
+    await askAmount(chatId, userId, nextData);
     return;
   }
 
@@ -703,9 +748,10 @@ async function handleText(update, chatId, userId, session) {
       }
 
       await cleanupMessages(userId);
-      await sendMessage(chatId, `ФИО: ${text}`);
+      let data = { ...(session?.data || {}) };
+      data = await sendFormMessage(chatId, data, `ФИО: ${text}`);
       saveProfile(userId, text);
-      await showRegionPage(chatId, userId, {});
+      await showRegionPage(chatId, userId, data);
       return;
     }
 
@@ -719,8 +765,8 @@ async function handleText(update, chatId, userId, session) {
 
       await cleanupMessages(userId);
       saveProfile(userId, text);
-      const data = { ...session.data, fio: text };
-      await sendMessage(chatId, `ФИО: ${text}`);
+      let data = { ...session.data, fio: text };
+      data = await sendFormMessage(chatId, data, `ФИО: ${text}`);
       await askTextReportDate(chatId, userId, data);
       return;
     }
@@ -735,8 +781,8 @@ async function handleText(update, chatId, userId, session) {
 
       await deleteStoredKeyboard(userId);
       await cleanupMessages(userId);
-      const data = { ...session.data, date: text };
-      await sendMessage(chatId, `Дата отчета: ${text}`);
+      let data = { ...session.data, date: text };
+      data = await sendFormMessage(chatId, data, `Дата отчета: ${text}`);
       await askTextReportText(chatId, userId, data);
       return;
     }
@@ -781,8 +827,8 @@ async function handleText(update, chatId, userId, session) {
 
       await deleteStoredKeyboard(userId);
       await cleanupMessages(userId);
-      const data = { ...session.data, date: text };
-      await sendMessage(chatId, `Дата: ${text}`);
+      let data = { ...session.data, date: text };
+      data = await sendFormMessage(chatId, data, `Дата: ${text}`);
       await askItem(chatId, userId, data);
       return;
     }
@@ -796,8 +842,8 @@ async function handleText(update, chatId, userId, session) {
       }
 
       await cleanupMessages(userId);
-      const data = { ...session.data, item: text };
-      await sendMessage(chatId, `Наименование товара: ${text}`);
+      let data = { ...session.data, item: text };
+      data = await sendFormMessage(chatId, data, `Наименование товара: ${text}`);
       await askEventType(chatId, userId, data);
       return;
     }
@@ -824,8 +870,8 @@ async function handleText(update, chatId, userId, session) {
       }
 
       await cleanupMessages(userId);
-      const data = { ...session.data, amount };
-      await sendMessage(chatId, `Сумма: ${amount} руб.`);
+      let data = { ...session.data, amount };
+      data = await sendFormMessage(chatId, data, `Сумма: ${amount} руб.`);
       await askPhoto(chatId, userId, data);
       return;
     }
@@ -857,7 +903,7 @@ async function handleText(update, chatId, userId, session) {
         return;
       }
 
-      const data = {
+      let data = {
         ...session.data,
         photos: [
           ...existingPhotos,
@@ -873,7 +919,7 @@ async function handleText(update, chatId, userId, session) {
       delete data.photoAttachmentPayload;
 
       await cleanupMessages(userId);
-      await sendMessage(chatId, `Фото получено: ${data.photos.length}/${MAX_PHOTOS_PER_RECORD}`);
+      data = await sendFormMessage(chatId, data, `Фото получено: ${data.photos.length}/${MAX_PHOTOS_PER_RECORD}`);
 
       if (data.photos.length >= MAX_PHOTOS_PER_RECORD) {
         if (data.eventType === EVENT_TYPES.MISSED_THEFT) {
@@ -900,8 +946,8 @@ async function handleText(update, chatId, userId, session) {
       }
 
       await cleanupMessages(userId);
-      const data = { ...session.data, missedReason: text };
-      await sendMessage(chatId, `Причина упущенной кражи: ${text}`);
+      let data = { ...session.data, missedReason: text };
+      data = await sendFormMessage(chatId, data, `Причина упущенной кражи: ${text}`);
       if (!(await showConfirm(chatId, userId, data))) {
         await startOnboarding(chatId, userId);
       }
