@@ -4,10 +4,19 @@ const { STATES } = require('../states');
 const { sendCleanupMessage } = require('./cleanupFlow');
 const { removeStoredKeyboard, sendKeyboardMessage } = require('./keyboardSession');
 
+function backButtonRow() {
+  return [{ text: '← Назад', type: 'callback', payload: 'form_back' }];
+}
+
 async function askTextReportFio(chatId, userId, data = {}) {
   await removeStoredKeyboard(userId);
   saveSession(userId, STATES.AWAIT_TEXT_REPORT_FIO, data);
-  await sendCleanupMessage(chatId, userId, 'Введите ФИО для отчета:');
+  await sendCleanupMessage(
+    chatId,
+    userId,
+    'Введите ФИО для отчета:',
+    inlineKeyboard([[{ text: '← В меню', type: 'callback', payload: 'main_menu' }]])
+  );
 }
 
 async function askTextReportDate(chatId, userId, data = {}) {
@@ -18,7 +27,8 @@ async function askTextReportDate(chatId, userId, data = {}) {
     userId,
     'Укажите дату отчета. Нажмите «Сегодня» или введите дату в формате ДД.ММ.ГГГГ.',
     inlineKeyboard([
-      [{ text: 'Сегодня', type: 'callback', payload: 'text_report_date_today' }]
+      [{ text: 'Сегодня', type: 'callback', payload: 'text_report_date_today' }],
+      backButtonRow()
     ])
   );
 }
@@ -26,7 +36,12 @@ async function askTextReportDate(chatId, userId, data = {}) {
 async function askTextReportText(chatId, userId, data = {}) {
   await removeStoredKeyboard(userId);
   saveSession(userId, STATES.AWAIT_TEXT_REPORT_TEXT, data);
-  await sendCleanupMessage(chatId, userId, 'Введите текст отчета:');
+  await sendCleanupMessage(
+    chatId,
+    userId,
+    'Введите текст отчета:',
+    inlineKeyboard([backButtonRow()])
+  );
 }
 
 function buildTextReportRow(data) {

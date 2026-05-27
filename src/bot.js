@@ -165,7 +165,10 @@ function buildSavedSummary(profile, data) {
 
 function buildSavedSummaryAttachments(data) {
   const attachments = inlineKeyboard([
-    [{ text: '+ Новая запись', type: 'callback', payload: 'new_record' }]
+    [
+      { text: '+ Новая фиксация', type: 'callback', payload: 'new_record' },
+      { text: '+ Новый отчет', type: 'callback', payload: 'new_text_report' }
+    ]
   ]);
 
   const photoAttachments = getPhotos(data)
@@ -177,6 +180,20 @@ function buildSavedSummaryAttachments(data) {
   attachments.unshift(...photoAttachments);
 
   return attachments;
+}
+
+function buildMainMenuAttachments() {
+  return inlineKeyboard([
+    [
+      { text: 'Фиксация', type: 'callback', payload: 'main_fixation' },
+      { text: 'Отчет', type: 'callback', payload: 'main_text_report' }
+    ]
+  ]);
+}
+
+async function showMainMenu(chatId, userId, text = 'Выберите действие:') {
+  saveSession(userId, STATES.IDLE, {});
+  await sendKeyboardMessage(chatId, userId, text, buildMainMenuAttachments());
 }
 
 async function sendUserId(chatId, userId) {
@@ -199,6 +216,15 @@ async function startOnboarding(chatId, userId) {
 }
 
 async function startFlow(chatId, userId) {
+  if (!hasValidConsent(userId)) {
+    await askConsent(chatId, userId);
+    return;
+  }
+
+  await showMainMenu(chatId, userId);
+}
+
+async function startFixationFlow(chatId, userId) {
   if (!hasValidConsent(userId)) {
     await askConsent(chatId, userId);
     return;
@@ -294,6 +320,18 @@ async function handleFormBack(chatId, userId, session) {
       await askPhoto(chatId, userId, omitFormFields(session.data, ['missedReason']));
       return;
 
+    case STATES.AWAIT_TEXT_REPORT_FIO:
+      await showMainMenu(chatId, userId);
+      return;
+
+    case STATES.AWAIT_TEXT_REPORT_DATE:
+      await askTextReportFio(chatId, userId, omitFormFields(session.data, ['fio', 'date']));
+      return;
+
+    case STATES.AWAIT_TEXT_REPORT_TEXT:
+      await askTextReportDate(chatId, userId, omitFormFields(session.data, ['date', 'reportText']));
+      return;
+
     case STATES.CONFIRM:
       if (session.data.eventType === EVENT_TYPES.MISSED_THEFT) {
         await askMissedReason(chatId, userId, omitFormFields(session.data, ['missedReason']));
@@ -332,6 +370,22 @@ async function handleCallback(update, chatId, userId, session) {
 
   if (payload === 'change_profile') {
     await handleProfileReset(chatId, userId);
+    return;
+  }
+
+  if (payload === 'main_menu') {
+    await cleanupMessages(userId);
+    await showMainMenu(chatId, userId);
+    return;
+  }
+
+  if (payload === 'main_fixation') {
+    await startFixationFlow(chatId, userId);
+    return;
+  }
+
+  if (payload === 'main_text_report' || payload === 'new_text_report') {
+    await startTextReportFlow(chatId, userId);
     return;
   }
 
@@ -529,7 +583,7 @@ async function handleCallback(update, chatId, userId, session) {
   }
 
   if (payload === 'new_record') {
-    await showRegionPage(chatId, userId, {});
+    await startFixationFlow(chatId, userId);
     return;
   }
 
@@ -685,8 +739,7 @@ async function handleText(update, chatId, userId, session) {
         await sendCleanupMessage(chatId, userId, 'Сохраняю отчет в Google Sheets, пожалуйста подождите...');
         await appendTextReportRow(buildTextReportRow(data));
         await cleanupMessages(userId);
-        saveSession(userId, STATES.IDLE, {});
-        await sendMessage(chatId, '✅ Отчет сохранен!');
+        await showMainMenu(chatId, userId, '✅ Отчет сохранен!\n\nВыберите следующее действие:');
       } catch (error) {
         logError('Не удалось сохранить текстовый отчет в Google Sheets:', error);
         await sendMessage(chatId, 'Не удалось записать отчет в Google Sheets. Попробуйте отправить текст отчета ещё раз позже.');
@@ -895,7 +948,7 @@ async function handleUpdate(update) {
     }
 
     if (update.update_type === 'message_callback') {
-      if (!['confirm_save', 'new_record'].includes(getPayload(update))) {
+      if (!['confirm_save', 'new_record', 'new_text_report'].includes(getPayload(update))) {
         await removeCallbackKeyboard(update);
       }
       await handleCallback(update, chatId, userId, session);
