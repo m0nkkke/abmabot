@@ -193,6 +193,7 @@ function buildMainMenuAttachments() {
 }
 
 async function showMainMenu(chatId, userId, text = 'Выберите действие:') {
+  await cleanupInterruptedForm(userId);
   saveSession(userId, STATES.IDLE, {});
   await sendKeyboardMessage(chatId, userId, text, buildMainMenuAttachments());
 }
