@@ -2,8 +2,10 @@ const { google } = require('googleapis');
 const { MAX_PHOTOS_PER_RECORD } = require('./constants');
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
+const REPORTS_SHEET_ID = process.env.GOOGLE_REPORTS_SHEET_ID || process.env.GOOGLE_REPORT_SHEET_ID || '';
 const CREDENTIALS_PATH = process.env.GOOGLE_CREDENTIALS_PATH || './credentials/service-account.json';
 const DATA_SHEET_NAME = 'Данные';
+const REPORTS_SHEET_NAME = process.env.GOOGLE_REPORTS_SHEET_NAME || 'Отчеты';
 const BASE_HEADERS = [
   'ФИО',
   'Регион',
@@ -21,9 +23,13 @@ const PHOTO_HEADERS = Array.from({ length: MAX_PHOTOS_PER_RECORD }, (_, index) =
   return [`Фото ${photoNumber}`, `Ссылка на фото ${photoNumber}`];
 }).flat();
 const HEADERS = [...BASE_HEADERS, ...PHOTO_HEADERS];
+const REPORT_HEADERS = ['ФИО', 'Дата', 'Отчет'];
 const HEADER_END_COLUMN = columnNameByIndex(HEADERS.length);
 const DATA_RANGE = `A:${HEADER_END_COLUMN}`;
 const HEADER_RANGE = `A1:${HEADER_END_COLUMN}1`;
+const REPORT_HEADER_END_COLUMN = columnNameByIndex(REPORT_HEADERS.length);
+const REPORT_DATA_RANGE = `A:${REPORT_HEADER_END_COLUMN}`;
+const REPORT_HEADER_RANGE = `A1:${REPORT_HEADER_END_COLUMN}1`;
 const GOOGLE_REQUEST_TIMEOUT_MS = Number(process.env.GOOGLE_REQUEST_TIMEOUT_MS || 20000);
 const MIN_EXTRA_ROWS = 1000;
 const MIN_EXTRA_COLUMNS = 5;
@@ -90,10 +96,6 @@ function columnNameByIndex(index) {
 }
 
 function getSheetsClient() {
-  if (!SHEET_ID) {
-    throw new Error('Не задана переменная окружения GOOGLE_SHEET_ID');
-  }
-
   if (!sheetsClient) {
     const auth = new google.auth.GoogleAuth({
       keyFile: CREDENTIALS_PATH,
@@ -104,6 +106,14 @@ function getSheetsClient() {
   }
 
   return sheetsClient;
+}
+
+function getReportsSheetId() {
+  if (!REPORTS_SHEET_ID) {
+    throw new Error('Не задана переменная окружения GOOGLE_REPORTS_SHEET_ID');
+  }
+
+  return REPORTS_SHEET_ID;
 }
 
 async function ensureShopSheet(sheets, shop) {
@@ -187,6 +197,88 @@ async function ensureShopSheet(sheets, shop) {
   );
 }
 
+async function ensureTextReportSheet(sheets) {
+  const spreadsheetId = getReportsSheetId();
+  log('Google Sheets: проверяем лист текстовых отчетов.', { sheet: REPORTS_SHEET_NAME });
+
+  const spreadsheet = await withTimeout(
+    sheets.spreadsheets.get({
+      spreadsheetId
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'получение метаданных таблицы отчетов'
+  );
+
+  const existingSheet = spreadsheet.data.sheets.find((sheet) => {
+    return sheet.properties && sheet.properties.title === REPORTS_SHEET_NAME;
+  });
+
+  if (!existingSheet) {
+    await withTimeout(
+      sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [
+            {
+              addSheet: {
+                properties: {
+                  title: REPORTS_SHEET_NAME
+                }
+              }
+            }
+          ]
+        }
+      }, {
+        timeout: GOOGLE_REQUEST_TIMEOUT_MS
+      }),
+      'создание листа текстовых отчетов'
+    );
+  }
+
+  await ensureTextReportGridSize(sheets, 1, REPORT_HEADERS.length);
+
+  const headerResponse = await withTimeout(
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${escapeSheetName(REPORTS_SHEET_NAME)}'!${REPORT_HEADER_RANGE}`
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'получение заголовков листа текстовых отчетов'
+  );
+  const currentHeaders = headerResponse.data.values?.[0] || [];
+  const headersAreActual = REPORT_HEADERS.every((header, index) => currentHeaders[index] === header);
+
+  if (headersAreActual) {
+    return;
+  }
+
+  await withTimeout(
+    sheets.spreadsheets.values.clear({
+      spreadsheetId,
+      range: `'${escapeSheetName(REPORTS_SHEET_NAME)}'!${REPORT_HEADER_RANGE}`
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'очистка старой строки заголовков листа текстовых отчетов'
+  );
+
+  await withTimeout(
+    sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${escapeSheetName(REPORTS_SHEET_NAME)}'!${REPORT_HEADER_RANGE}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [REPORT_HEADERS]
+      }
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'обновление заголовков листа текстовых отчетов'
+  );
+}
+
 function findNextDataRow(values) {
   const rows = values || [];
 
@@ -267,6 +359,75 @@ async function ensureSheetGridSize(sheets, sheetName, minRows, minColumns = HEAD
   );
 }
 
+async function getTextReportSheetProperties(sheets) {
+  const spreadsheetId = getReportsSheetId();
+  const spreadsheet = await withTimeout(
+    sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: 'sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))'
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `получение свойств листа ${REPORTS_SHEET_NAME}`
+  );
+
+  const sheet = spreadsheet.data.sheets.find((item) => {
+    return item.properties && item.properties.title === REPORTS_SHEET_NAME;
+  });
+
+  if (!sheet?.properties) {
+    throw new Error(`Лист ${REPORTS_SHEET_NAME} не найден`);
+  }
+
+  return sheet.properties;
+}
+
+async function ensureTextReportGridSize(sheets, minRows, minColumns = REPORT_HEADERS.length) {
+  const spreadsheetId = getReportsSheetId();
+  const properties = await getTextReportSheetProperties(sheets);
+  const rowCount = properties.gridProperties?.rowCount || 0;
+  const columnCount = properties.gridProperties?.columnCount || 0;
+
+  if (rowCount >= minRows && columnCount >= minColumns) {
+    return;
+  }
+
+  const targetRows = rowCount >= minRows ? rowCount : minRows + MIN_EXTRA_ROWS;
+  const targetColumns = columnCount >= minColumns ? columnCount : minColumns + MIN_EXTRA_COLUMNS;
+  log('Google Sheets: расширяем лист отчетов перед записью.', {
+    sheetName: REPORTS_SHEET_NAME,
+    currentRows: rowCount,
+    currentColumns: columnCount,
+    targetRows,
+    targetColumns
+  });
+
+  await withTimeout(
+    sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [
+          {
+            updateSheetProperties: {
+              properties: {
+                sheetId: properties.sheetId,
+                gridProperties: {
+                  rowCount: targetRows,
+                  columnCount: targetColumns
+                }
+              },
+              fields: 'gridProperties.rowCount,gridProperties.columnCount'
+            }
+          }
+        ]
+      }
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `расширение листа отчетов до ${targetRows} строк и ${targetColumns} колонок`
+  );
+}
+
 async function writeRowToNextFreeLine(sheets, sheetName, row) {
   const escapedSheetName = escapeSheetName(sheetName);
   const valuesResponse = await withTimeout(
@@ -299,8 +460,48 @@ async function writeRowToNextFreeLine(sheets, sheetName, row) {
   );
 }
 
+async function writeTextReportToNextFreeLine(sheets, row) {
+  const spreadsheetId = getReportsSheetId();
+  const escapedSheetName = escapeSheetName(REPORTS_SHEET_NAME);
+  const valuesResponse = await withTimeout(
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${escapedSheetName}'!${REPORT_DATA_RANGE}`,
+      majorDimension: 'ROWS'
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `поиск свободной строки на листе ${REPORTS_SHEET_NAME}`
+  );
+
+  const nextRow = findNextDataRow(valuesResponse.data.values);
+  await ensureTextReportGridSize(sheets, nextRow, REPORT_HEADERS.length);
+  log('Google Sheets: записываем текстовый отчет в явный диапазон.', {
+    sheetName: REPORTS_SHEET_NAME,
+    row: nextRow
+  });
+
+  await withTimeout(
+    sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${escapedSheetName}'!A${nextRow}:${REPORT_HEADER_END_COLUMN}${nextRow}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [row]
+      }
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `запись строки ${nextRow} на лист ${REPORTS_SHEET_NAME}`
+  );
+}
+
 async function appendRow(shop, row) {
   try {
+    if (!SHEET_ID) {
+      throw new Error('Не задана переменная окружения GOOGLE_SHEET_ID');
+    }
+
     log('Google Sheets: начинаем запись строки.', { shop });
     const sheets = getSheetsClient();
     await ensureShopSheet(sheets, shop);
@@ -316,4 +517,17 @@ async function appendRow(shop, row) {
   }
 }
 
-module.exports = { appendRow };
+async function appendTextReportRow(row) {
+  try {
+    log('Google Sheets: начинаем запись текстового отчета.', { sheet: REPORTS_SHEET_NAME });
+    const sheets = getSheetsClient();
+    await ensureTextReportSheet(sheets);
+    await writeTextReportToNextFreeLine(sheets, row);
+    log('Google Sheets: текстовый отчет успешно записан.', { sheet: REPORTS_SHEET_NAME });
+  } catch (error) {
+    logError('Ошибка записи текстового отчета в Google Sheets:', error);
+    throw error;
+  }
+}
+
+module.exports = { appendRow, appendTextReportRow };

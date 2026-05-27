@@ -28,6 +28,7 @@ const VIOLATION_TYPES = {
 
 const BOT_COMMANDS = [
   { name: 'start', description: 'Начать работу с ботом' },
+  { name: 'report', description: 'Отправить текстовый отчет' },
   { name: 'id', description: 'Показать мой MAX user_id' },
   { name: 'help', description: 'Показать справку по командам' },
   { name: 'profile', description: 'Изменить ФИО' },

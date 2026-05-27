@@ -30,7 +30,7 @@ const {
   updateEmployeeShop,
   isAllowedUser
 } = require('./db');
-const { appendRow } = require('./sheets');
+const { appendRow, appendTextReportRow } = require('./sheets');
 const {
   acceptConsent,
   askConsent,
@@ -65,6 +65,12 @@ const {
   askViolationType,
   showConfirm
 } = require('./flows/reportFlow');
+const {
+  askTextReportDate,
+  askTextReportFio,
+  askTextReportText,
+  buildTextReportRow
+} = require('./flows/textReportFlow');
 const { savePhotoFromUpdate } = require('./photos');
 
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || '';
@@ -205,6 +211,20 @@ async function startFlow(chatId, userId) {
   }
 
   await showRegionPage(chatId, userId, {});
+}
+
+async function startTextReportFlow(chatId, userId) {
+  if (!hasValidConsent(userId)) {
+    await askConsent(chatId, userId);
+    return;
+  }
+
+  await askTextReportFio(chatId, userId, {});
+}
+
+function isTextReportCommand(text) {
+  const command = String(text || '').trim().toLowerCase();
+  return command === '/report' || command === '/command';
 }
 
 function omitFormFields(data, fields) {
@@ -394,6 +414,19 @@ async function handleCallback(update, chatId, userId, session) {
     return;
   }
 
+  if (payload === 'text_report_date_today') {
+    if (!session || session.state !== STATES.AWAIT_TEXT_REPORT_DATE) {
+      await askTextReportDate(chatId, userId, session?.data || {});
+      return;
+    }
+
+    const data = { ...session.data, date: todayMskPlus5() };
+    await deleteCallbackMessage(update);
+    await sendMessage(chatId, `Дата отчета: ${data.date}`);
+    await askTextReportText(chatId, userId, data);
+    return;
+  }
+
   if (payload === 'date_today' || payload === 'date_now') {
     if (!session || session.state !== STATES.AWAIT_DATE) {
       await askDate(chatId, userId, session?.data || {});
@@ -541,6 +574,11 @@ async function handleText(update, chatId, userId, session) {
     return;
   }
 
+  if (isTextReportCommand(text)) {
+    await startTextReportFlow(chatId, userId);
+    return;
+  }
+
   if (text === '/profile') {
     await handleProfileReset(chatId, userId);
     return;
@@ -598,6 +636,61 @@ async function handleText(update, chatId, userId, session) {
       await sendMessage(chatId, `ФИО: ${text}`);
       saveProfile(userId, text);
       await showRegionPage(chatId, userId, {});
+      return;
+    }
+
+    case STATES.AWAIT_TEXT_REPORT_FIO: {
+      if (!text) {
+        await cleanupMessages(userId);
+        await sendMessage(chatId, 'Введите ФИО текстом:');
+        await askTextReportFio(chatId, userId, session.data);
+        return;
+      }
+
+      await cleanupMessages(userId);
+      const data = { ...session.data, fio: text };
+      await sendMessage(chatId, `ФИО: ${text}`);
+      await askTextReportDate(chatId, userId, data);
+      return;
+    }
+
+    case STATES.AWAIT_TEXT_REPORT_DATE: {
+      if (!isValidDate(text)) {
+        await cleanupMessages(userId);
+        await sendMessage(chatId, 'Дата отчета указана неверно. Введите дату в формате ДД.ММ.ГГГГ или нажмите «Сегодня».');
+        await askTextReportDate(chatId, userId, session.data);
+        return;
+      }
+
+      await deleteStoredKeyboard(userId);
+      await cleanupMessages(userId);
+      const data = { ...session.data, date: text };
+      await sendMessage(chatId, `Дата отчета: ${text}`);
+      await askTextReportText(chatId, userId, data);
+      return;
+    }
+
+    case STATES.AWAIT_TEXT_REPORT_TEXT: {
+      if (!text) {
+        await cleanupMessages(userId);
+        await sendMessage(chatId, 'Введите текст отчета:');
+        await askTextReportText(chatId, userId, session.data);
+        return;
+      }
+
+      const data = { ...session.data, reportText: text };
+
+      try {
+        await cleanupMessages(userId);
+        await sendCleanupMessage(chatId, userId, 'Сохраняю отчет в Google Sheets, пожалуйста подождите...');
+        await appendTextReportRow(buildTextReportRow(data));
+        await cleanupMessages(userId);
+        saveSession(userId, STATES.IDLE, {});
+        await sendMessage(chatId, '✅ Отчет сохранен!');
+      } catch (error) {
+        logError('Не удалось сохранить текстовый отчет в Google Sheets:', error);
+        await sendMessage(chatId, 'Не удалось записать отчет в Google Sheets. Попробуйте отправить текст отчета ещё раз позже.');
+      }
       return;
     }
 
