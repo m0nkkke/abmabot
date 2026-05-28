@@ -29,6 +29,7 @@ const {
   deleteSession,
   deleteUserLocalData,
   updateEmployeeShop,
+  rememberRecentShop,
   isAllowedUser
 } = require('./db');
 const { appendRow, appendTextReportRow } = require('./sheets');
@@ -54,6 +55,7 @@ const {
   getRegionByPayload,
   getShopByPayload,
   showRegionPage,
+  showShopSearchResults,
   showShopPage
 } = require('./flows/profileFlow');
 const {
@@ -73,6 +75,7 @@ const {
   buildTextReportRow
 } = require('./flows/textReportFlow');
 const { savePhotoFromUpdate } = require('./photos');
+const { searchShops } = require('./shops');
 
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || '';
 const GOOGLE_SHEET_URL = process.env.GOOGLE_SHEET_URL || (GOOGLE_SHEET_ID ? `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/edit` : '');
@@ -468,8 +471,37 @@ async function handleCallback(update, chatId, userId, session) {
     return;
   }
 
+  if (payload === 'choose_other_shop') {
+    await deleteCallbackMessage(update);
+    await showRegionPage(chatId, userId, { ...(session?.data || {}), skipRecentShops: true });
+    return;
+  }
+
   if (payload === 'form_back') {
     await handleFormBack(chatId, userId, session);
+    return;
+  }
+
+  if (payload.startsWith('recent_shop_')) {
+    const recentIndex = Number(payload.replace('recent_shop_', ''));
+    const recentShop = session?.data?.recentShops?.[recentIndex];
+
+    if (!recentShop) {
+      await sendMessage(chatId, 'Не удалось выбрать недавний магазин. Выберите регион.');
+      await showRegionPage(chatId, userId, {});
+      return;
+    }
+
+    await deleteCallbackMessage(update);
+    let data = {
+      ...(session?.data || {}),
+      region: recentShop.region,
+      shop: recentShop.shop
+    };
+    delete data.recentShops;
+
+    data = await sendFormMessage(chatId, data, `Магазин: ${recentShop.shop}`);
+    await askDate(chatId, userId, data);
     return;
   }
 
@@ -484,6 +516,7 @@ async function handleCallback(update, chatId, userId, session) {
 
     await deleteCallbackMessage(update);
     let data = { ...(session?.data || {}), region };
+    delete data.recentShops;
     data = await sendFormMessage(chatId, data, `Регион: ${region}`);
     await showShopPage(chatId, userId, 0, data);
     return;
@@ -520,6 +553,7 @@ async function handleCallback(update, chatId, userId, session) {
 
     await deleteCallbackMessage(update);
     let data = { ...(session?.data || {}), region, shop: shopText };
+    delete data.recentShops;
     if (session?.data?.fio && !getProfile(userId)) {
       saveProfile(userId, session.data.fio);
     }
@@ -663,6 +697,7 @@ async function handleCallback(update, chatId, userId, session) {
       await sendCleanupMessage(chatId, userId, 'Сохраняю данные в Google Sheets, пожалуйста подождите...');
 
       await appendRow(currentSession.data.region || 'Без региона', buildSheetRow(profile, currentSession.data));
+      rememberRecentShop(userId, currentSession.data.region || 'Без региона', currentSession.data.shop || 'Не указан');
 
       await cleanupMessages(userId);
       await deleteCallbackMessage(update);
@@ -753,6 +788,39 @@ async function handleText(update, chatId, userId, session) {
       data = await sendFormMessage(chatId, data, `ФИО: ${text}`);
       saveProfile(userId, text);
       await showRegionPage(chatId, userId, data);
+      return;
+    }
+
+    case STATES.AWAIT_REGION:
+    case STATES.AWAIT_SHOP_PAGE: {
+      const matches = searchShops(text, 9);
+      if (!matches.length) {
+        await cleanupMessages(userId);
+        await sendMessage(chatId, 'Магазин не найден. Введите номер или название магазина, например К31, КЭШ-31, Ирк-3.');
+        await showRegionPage(chatId, userId, session.data || {});
+        return;
+      }
+
+      if (matches.length === 1 || matches[0].score >= 100) {
+        const selectedShop = matches[0].shop;
+        let data = {
+          ...(session.data || {}),
+          region: selectedShop.region,
+          shop: selectedShop.name
+        };
+        delete data.recentShops;
+        delete data.searchResults;
+        delete data.searchQuery;
+
+        await deleteStoredKeyboard(userId);
+        await cleanupMessages(userId);
+        data = await sendFormMessage(chatId, data, `Магазин: ${selectedShop.name}`);
+        await askDate(chatId, userId, data);
+        return;
+      }
+
+      await cleanupMessages(userId);
+      await showShopSearchResults(chatId, userId, matches, text, session.data || {});
       return;
     }
 

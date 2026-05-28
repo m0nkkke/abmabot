@@ -1,25 +1,59 @@
 const { SHOP_BUTTONS_PER_ROW, SHOPS_PER_PAGE } = require('../constants');
-const { saveSession } = require('../db');
+const { listRecentShops, saveSession } = require('../db');
 const { inlineKeyboard } = require('../keyboards');
 const { REGIONS, SHOPS, formatShop, getShopsByRegion } = require('../shops');
 const { STATES } = require('../states');
 const { removeStoredKeyboard, sendKeyboardMessage } = require('./keyboardSession');
 
 async function showRegionPage(chatId, userId, data = {}) {
-  const buttons = REGIONS.map((region, index) => ([
-    { text: region, type: 'callback', payload: `region_${index}` }
+  const recentShops = data.adminEditUserId || data.skipRecentShops ? [] : listRecentShops(userId, 5);
+  const buttons = recentShops.map((shop, index) => ([
+    { text: shop.shop, type: 'callback', payload: `recent_shop_${index}` }
   ]));
+
+  if (recentShops.length) {
+    buttons.push([{ text: 'Выбрать другой магазин', type: 'callback', payload: 'choose_other_shop' }]);
+  }
+
+  buttons.push(...REGIONS.map((region, index) => ([
+    { text: region, type: 'callback', payload: `region_${index}` }
+  ])));
 
   if (!data.adminEditUserId) {
     buttons.push([{ text: '← В меню', type: 'callback', payload: 'main_menu' }]);
   }
 
   await removeStoredKeyboard(userId);
-  saveSession(userId, STATES.AWAIT_REGION, data);
+  const nextData = { ...data, recentShops };
+  delete nextData.skipRecentShops;
+
+  saveSession(userId, STATES.AWAIT_REGION, nextData);
   await sendKeyboardMessage(
     chatId,
     userId,
-    'Выберите регион:',
+    recentShops.length
+      ? 'Выберите недавний магазин, регион или введите магазин текстом:'
+      : 'Выберите регион или введите магазин текстом:',
+    inlineKeyboard(buttons)
+  );
+}
+
+async function showShopSearchResults(chatId, userId, matches, query, data = {}) {
+  const buttons = matches.map((match) => ([
+    { text: formatShop(match.shop), type: 'callback', payload: `shop_${match.index}` }
+  ]));
+  buttons.push([{ text: '← Назад к регионам', type: 'callback', payload: 'form_back' }]);
+
+  await removeStoredKeyboard(userId);
+  saveSession(userId, STATES.AWAIT_SHOP_PAGE, {
+    ...data,
+    searchQuery: query,
+    searchResults: matches.map((match) => match.index)
+  });
+  await sendKeyboardMessage(
+    chatId,
+    userId,
+    `Найдено по запросу «${query}»:`,
     inlineKeyboard(buttons)
   );
 }
@@ -89,6 +123,7 @@ module.exports = {
   getShopByPayload,
   showAdminRegionPage,
   showAdminShopPage,
+  showShopSearchResults,
   showRegionPage,
   showShopPage
 };

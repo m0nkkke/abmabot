@@ -49,6 +49,14 @@ db.exec(`
     approved_at DATETIME,
     approved_by TEXT
   );
+
+  CREATE TABLE IF NOT EXISTS recent_shops (
+    user_id TEXT NOT NULL,
+    region TEXT NOT NULL,
+    shop TEXT NOT NULL,
+    selected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (user_id, region, shop)
+  );
 `);
 
 const employeeColumns = db.pragma('table_info(employees)').map((column) => column.name);
@@ -142,6 +150,30 @@ const listPendingAccessRequestsStmt = db.prepare(`
   FROM access_requests
   WHERE status = 'pending'
   ORDER BY requested_at ASC
+`);
+const upsertRecentShopStmt = db.prepare(`
+  INSERT INTO recent_shops (user_id, region, shop, selected_at)
+  VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+  ON CONFLICT(user_id, region, shop) DO UPDATE SET
+    selected_at = CURRENT_TIMESTAMP
+`);
+const listRecentShopsStmt = db.prepare(`
+  SELECT region, shop, selected_at
+  FROM recent_shops
+  WHERE user_id = ?
+  ORDER BY selected_at DESC
+  LIMIT ?
+`);
+const deleteOldRecentShopsStmt = db.prepare(`
+  DELETE FROM recent_shops
+  WHERE user_id = ?
+    AND (region || char(31) || shop) NOT IN (
+      SELECT region || char(31) || shop
+      FROM recent_shops
+      WHERE user_id = ?
+      ORDER BY selected_at DESC
+      LIMIT ?
+    )
 `);
 
 function getProfile(userId) {
@@ -287,6 +319,19 @@ function listPendingAccessRequests() {
   return listPendingAccessRequestsStmt.all();
 }
 
+function rememberRecentShop(userId, region, shop, limit = 5) {
+  const save = db.transaction((id, shopRegion, shopName, maxItems) => {
+    upsertRecentShopStmt.run(id, shopRegion, shopName);
+    deleteOldRecentShopsStmt.run(id, id, maxItems);
+  });
+
+  save(String(userId), region, shop, limit);
+}
+
+function listRecentShops(userId, limit = 5) {
+  return listRecentShopsStmt.all(String(userId), limit);
+}
+
 function closeDb() {
   db.close();
 }
@@ -314,5 +359,7 @@ module.exports = {
   approveAccessRequest,
   denyAccessRequest,
   listPendingAccessRequests,
+  rememberRecentShop,
+  listRecentShops,
   closeDb
 };
