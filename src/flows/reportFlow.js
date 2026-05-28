@@ -95,6 +95,46 @@ async function askMissedReason(chatId, userId, data = {}) {
     await sendCleanupMessage(chatId, userId, 'Опишите причину упущенной кражи:', backKeyboard());
 }
 
+async function askCheckAction(chatId, userId, data = {}) {
+    saveSession(userId, STATES.AWAIT_CHECK_ACTION, data);
+    const eventsCount = Array.isArray(data.events) ? data.events.length : 0;
+    await sendCleanupMessage(
+      chatId,
+      userId,
+      `Что добавить к этому чеку?\n\nСобытий в чеке: ${eventsCount}`,
+      inlineKeyboard([
+        [{ text: 'Добавить кражу', type: 'callback', payload: 'check_add_theft' }],
+        [{ text: 'Добавить нарушение', type: 'callback', payload: 'check_add_violation' }],
+        [{ text: 'Завершить чек', type: 'callback', payload: 'check_finish' }],
+        backButtonRow()
+      ])
+    );
+}
+
+function formatEventRows(data) {
+    const events = Array.isArray(data.events) && data.events.length
+      ? data.events
+      : [{
+        eventType: data.eventType,
+        violationType: data.violationType,
+        amount: data.amount,
+        missedReason: data.missedReason
+      }].filter((event) => event.eventType);
+
+    if (!events.length) {
+      return ['События чека: не добавлены'];
+    }
+
+    return [
+      'События чека:',
+      ...events.map((event, index) => {
+        const eventLabel = event.violationType ? `${event.eventType}: ${event.violationType}` : event.eventType;
+        const reason = event.missedReason ? `, причина: ${event.missedReason}` : '';
+        return `${index + 1}. ${eventLabel}, сумма: ${event.amount} руб.${reason}`;
+      })
+    ];
+}
+
 function buildSummary(profile, data) {
     const rows = [
         'Проверьте данные перед сохранением:',
@@ -104,15 +144,10 @@ function buildSummary(profile, data) {
         `Магазин: ${data.shop || 'Не указан'}`,
         `Дата: ${data.date}`,
         `Наименование товара: ${data.item}`,
-        `Тип фиксации: ${data.eventType}`,
-        ...(data.violationType ? [`Вид нарушения: ${data.violationType}`] : []),
         `Фото: ${Array.isArray(data.photos) ? data.photos.length : 0}`,
-        `Сумма: ${data.amount} руб.`
+        '',
+        ...formatEventRows(data)
     ];
-
-    if (data.eventType === EVENT_TYPES.MISSED_THEFT) {
-        rows.push(`Причина упущенной кражи: ${data.missedReason}`);
-    }
 
     return rows.join('\n');
 }
@@ -159,6 +194,7 @@ module.exports = {
     askEventType,
     askItem,
     askPhoto,
+    askCheckAction,
     askMissedReason,
     askViolationType,
     buildSummary,

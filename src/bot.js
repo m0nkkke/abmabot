@@ -65,6 +65,7 @@ const {
   askItem,
   askMissedReason,
   askPhoto,
+  askCheckAction,
   askViolationType,
   showConfirm
 } = require('./flows/reportFlow');
@@ -121,27 +122,106 @@ function buildPhotoCells(data) {
   return cells;
 }
 
-function formatEventTypeForSheet(data) {
-  if (data.eventType === EVENT_TYPES.VIOLATION && data.violationType) {
-    return `${data.eventType}: ${data.violationType}`;
+function formatEventTypeForSheet(event) {
+  if (event.eventType === EVENT_TYPES.VIOLATION && event.violationType) {
+    return `${event.eventType}: ${event.violationType}`;
   }
 
-  return data.eventType;
+  return event.eventType;
 }
 
-function buildSheetRow(profile, data) {
+function getEvents(data) {
+  if (Array.isArray(data.events) && data.events.length) {
+    return data.events;
+  }
+
+  if (!data.eventType) {
+    return [];
+  }
+
+  return [{
+    eventType: data.eventType,
+    violationType: data.violationType,
+    amount: data.amount,
+    missedReason: data.missedReason
+  }];
+}
+
+function appendCurrentEvent(data) {
+  const event = {
+    eventType: data.eventType,
+    violationType: data.violationType,
+    amount: data.amount,
+    missedReason: data.missedReason || ''
+  };
+  const nextData = {
+    ...data,
+    events: [...(Array.isArray(data.events) ? data.events : []), event]
+  };
+
+  delete nextData.eventType;
+  delete nextData.violationType;
+  delete nextData.amount;
+  delete nextData.missedReason;
+
+  return nextData;
+}
+
+function popLastEvent(data) {
+  const events = Array.isArray(data.events) ? [...data.events] : [];
+  const lastEvent = events.pop();
+
+  if (!lastEvent) {
+    return null;
+  }
+
+  const nextData = {
+    ...data,
+    events,
+    eventType: lastEvent.eventType,
+    violationType: lastEvent.violationType
+  };
+
+  delete nextData.amount;
+  delete nextData.missedReason;
+
+  return nextData;
+}
+
+function buildSheetRow(profile, data, event) {
   return [
     profile.fio,
     data.region || '',
     data.shop || '',
     data.date,
     data.item,
-    formatEventTypeForSheet(data),
-    data.eventType === EVENT_TYPES.THEFT ? data.amount : '',
-    data.eventType === EVENT_TYPES.MISSED_THEFT ? data.amount : '',
-    data.eventType === EVENT_TYPES.VIOLATION ? data.amount : '',
-    data.missedReason || '',
+    formatEventTypeForSheet(event),
+    event.eventType === EVENT_TYPES.THEFT ? event.amount : '',
+    event.eventType === EVENT_TYPES.MISSED_THEFT ? event.amount : '',
+    event.eventType === EVENT_TYPES.VIOLATION ? event.amount : '',
+    event.missedReason || '',
     ...buildPhotoCells(data)
+  ];
+}
+
+function buildSheetRows(profile, data) {
+  return getEvents(data).map((event) => buildSheetRow(profile, data, event));
+}
+
+function buildEventSummaryRows(data) {
+  const events = getEvents(data);
+
+  if (!events.length) {
+    return ['События чека: не добавлены'];
+  }
+
+  return [
+    'События чека:',
+    ...events.map((event, index) => {
+      const eventLabel = event.violationType ? `${event.eventType}: ${event.violationType}` : event.eventType;
+      const reason = event.missedReason ? `, причина: ${event.missedReason}` : '';
+      return `${index + 1}. ${eventLabel}, сумма: ${event.amount} руб.${reason}`;
+    })
   ];
 }
 
@@ -154,15 +234,10 @@ function buildSavedSummary(profile, data) {
     `Магазин: ${data.shop || 'Не указан'}`,
     `Дата: ${data.date}`,
     `Наименование товара: ${data.item}`,
-    `Тип фиксации: ${data.eventType}`,
-    ...(data.violationType ? [`Вид нарушения: ${data.violationType}`] : []),
     `Фото: ${getPhotos(data).length}`,
-    `Сумма: ${data.amount} руб.`
+    '',
+    ...buildEventSummaryRows(data)
   ];
-
-  if (data.eventType === EVENT_TYPES.MISSED_THEFT) {
-    rows.push(`Причина упущенной кражи: ${data.missedReason}`);
-  }
 
   return rows.join('\n');
 }
@@ -349,7 +424,7 @@ async function handleFormBack(chatId, userId, session) {
       return;
 
     case STATES.AWAIT_EVENT_TYPE:
-      await askItem(chatId, userId, omitFormFields(session.data, ['item', 'eventType', 'violationType', 'amount']));
+      await askItem(chatId, userId, omitFormFields(session.data, ['item', 'eventType', 'violationType', 'amount', 'events']));
       return;
 
     case STATES.AWAIT_VIOLATION_TYPE:
@@ -377,6 +452,17 @@ async function handleFormBack(chatId, userId, session) {
       await askPhoto(chatId, userId, omitFormFields(session.data, ['missedReason']));
       return;
 
+    case STATES.AWAIT_CHECK_ACTION: {
+      const data = popLastEvent(session.data);
+      if (!data) {
+        await askEventType(chatId, userId, omitFormFields(session.data, ['eventType', 'violationType', 'amount', 'missedReason']));
+        return;
+      }
+
+      await askAmount(chatId, userId, data);
+      return;
+    }
+
     case STATES.AWAIT_TEXT_REPORT_FIO:
       await showMainMenu(chatId, userId);
       return;
@@ -395,16 +481,7 @@ async function handleFormBack(chatId, userId, session) {
       return;
 
     case STATES.CONFIRM:
-      if (session.data.eventType === EVENT_TYPES.MISSED_THEFT) {
-        await askMissedReason(chatId, userId, omitFormFields(session.data, ['missedReason']));
-        return;
-      }
-
-      await askPhoto(
-        chatId,
-        userId,
-        session.data
-      );
+      await askCheckAction(chatId, userId, session.data);
       return;
 
     default:
@@ -666,7 +743,56 @@ async function handleCallback(update, chatId, userId, session) {
       return;
     }
 
-    if (!(await showConfirm(chatId, userId, data))) {
+    await askCheckAction(chatId, userId, appendCurrentEvent(data));
+    return;
+  }
+
+  if (payload === 'check_add_theft') {
+    if (!session || session.state !== STATES.AWAIT_CHECK_ACTION) {
+      await askCheckAction(chatId, userId, session?.data || {});
+      return;
+    }
+
+    await deleteCallbackMessage(update);
+    let data = {
+      ...session.data,
+      eventType: EVENT_TYPES.THEFT
+    };
+    data = await sendFormMessage(chatId, data, `Тип фиксации: ${EVENT_TYPES.THEFT}`);
+    await askAmount(chatId, userId, data);
+    return;
+  }
+
+  if (payload === 'check_add_violation') {
+    if (!session || session.state !== STATES.AWAIT_CHECK_ACTION) {
+      await askCheckAction(chatId, userId, session?.data || {});
+      return;
+    }
+
+    await deleteCallbackMessage(update);
+    let data = {
+      ...session.data,
+      eventType: EVENT_TYPES.VIOLATION
+    };
+    data = await sendFormMessage(chatId, data, `Тип фиксации: ${EVENT_TYPES.VIOLATION}`);
+    await askViolationType(chatId, userId, data);
+    return;
+  }
+
+  if (payload === 'check_finish') {
+    if (!session || session.state !== STATES.AWAIT_CHECK_ACTION) {
+      await askCheckAction(chatId, userId, session?.data || {});
+      return;
+    }
+
+    if (!getEvents(session.data).length) {
+      await sendMessage(chatId, 'Добавьте хотя бы одно событие в чек.');
+      await askCheckAction(chatId, userId, session.data);
+      return;
+    }
+
+    await deleteCallbackMessage(update);
+    if (!(await showConfirm(chatId, userId, session.data))) {
       await startOnboarding(chatId, userId);
     }
     return;
@@ -696,7 +822,17 @@ async function handleCallback(update, chatId, userId, session) {
     try {
       await sendCleanupMessage(chatId, userId, 'Сохраняю данные в Google Sheets, пожалуйста подождите...');
 
-      await appendRow(currentSession.data.region || 'Без региона', buildSheetRow(profile, currentSession.data));
+      const rows = buildSheetRows(profile, currentSession.data);
+
+      if (!rows.length) {
+        await sendMessage(chatId, 'В чеке нет событий для сохранения. Добавьте кражу или нарушение.');
+        await askCheckAction(chatId, userId, currentSession.data);
+        return;
+      }
+
+      for (const row of rows) {
+        await appendRow(currentSession.data.region || 'Без региона', row);
+      }
       rememberRecentShop(userId, currentSession.data.region || 'Без региона', currentSession.data.shop || 'Не указан');
 
       await cleanupMessages(userId);
@@ -941,6 +1077,16 @@ async function handleText(update, chatId, userId, session) {
       await cleanupMessages(userId);
       let data = { ...session.data, amount };
       data = await sendFormMessage(chatId, data, `Сумма: ${amount} руб.`);
+      if (getPhotos(data).length) {
+        if (data.eventType === EVENT_TYPES.MISSED_THEFT) {
+          await askMissedReason(chatId, userId, data);
+          return;
+        }
+
+        await askCheckAction(chatId, userId, appendCurrentEvent(data));
+        return;
+      }
+
       await askPhoto(chatId, userId, data);
       return;
     }
@@ -996,9 +1142,7 @@ async function handleText(update, chatId, userId, session) {
           return;
         }
 
-        if (!(await showConfirm(chatId, userId, data))) {
-          await startOnboarding(chatId, userId);
-        }
+        await askCheckAction(chatId, userId, appendCurrentEvent(data));
         return;
       }
 
@@ -1017,11 +1161,13 @@ async function handleText(update, chatId, userId, session) {
       await cleanupMessages(userId);
       let data = { ...session.data, missedReason: text };
       data = await sendFormMessage(chatId, data, `Причина упущенной кражи: ${text}`);
-      if (!(await showConfirm(chatId, userId, data))) {
-        await startOnboarding(chatId, userId);
-      }
+      await askCheckAction(chatId, userId, appendCurrentEvent(data));
       return;
     }
+
+    case STATES.AWAIT_CHECK_ACTION:
+      await sendMessage(chatId, 'Выберите действие кнопкой: добавить событие или завершить чек.');
+      return;
 
     case STATES.CONFIRM:
       await sendMessage(chatId, 'Подтвердите сохранение кнопкой или начните заново.');
