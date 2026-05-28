@@ -97,15 +97,14 @@ async function askMissedReason(chatId, userId, data = {}) {
 
 async function askCheckAction(chatId, userId, data = {}) {
     saveSession(userId, STATES.AWAIT_CHECK_ACTION, data);
-    const eventsCount = Array.isArray(data.events) ? data.events.length : 0;
     await sendCleanupMessage(
       chatId,
       userId,
-      `Что добавить к этому чеку?\n\nСобытий в чеке: ${eventsCount}`,
+      `${formatEventRows(data).join('\n')}\n\nДобавить еще событие в этот чек?`,
       inlineKeyboard([
-        [{ text: 'Добавить кражу', type: 'callback', payload: 'check_add_theft' }],
-        [{ text: 'Добавить нарушение', type: 'callback', payload: 'check_add_violation' }],
-        [{ text: 'Завершить чек', type: 'callback', payload: 'check_finish' }],
+        [{ text: '+ Кража', type: 'callback', payload: 'check_add_theft' }],
+        [{ text: '+ Нарушение', type: 'callback', payload: 'check_add_violation' }],
+        [{ text: 'Перейти к фото', type: 'callback', payload: 'check_finish' }],
         backButtonRow()
       ])
     );
@@ -122,11 +121,11 @@ function formatEventRows(data) {
       }].filter((event) => event.eventType);
 
     if (!events.length) {
-      return ['События чека: не добавлены'];
+      return ['Добавлено: пока нет событий'];
     }
 
     return [
-      'События чека:',
+      'Добавлено:',
       ...events.map((event, index) => {
         const eventLabel = event.violationType ? `${event.eventType}: ${event.violationType}` : event.eventType;
         const reason = event.missedReason ? `, причина: ${event.missedReason}` : '';

@@ -428,6 +428,11 @@ async function handleFormBack(chatId, userId, session) {
       return;
 
     case STATES.AWAIT_VIOLATION_TYPE:
+      if (Array.isArray(session.data.events) && session.data.events.length) {
+        await askCheckAction(chatId, userId, omitFormFields(session.data, ['eventType', 'violationType', 'amount']));
+        return;
+      }
+
       await askEventType(chatId, userId, omitFormFields(session.data, ['eventType', 'violationType', 'amount']));
       return;
 
@@ -437,19 +442,24 @@ async function handleFormBack(chatId, userId, session) {
         return;
       }
 
+      if (Array.isArray(session.data.events) && session.data.events.length) {
+        await askCheckAction(chatId, userId, omitFormFields(session.data, ['eventType', 'violationType', 'amount', 'missedReason']));
+        return;
+      }
+
       await askEventType(chatId, userId, omitFormFields(session.data, ['eventType', 'violationType', 'amount']));
       return;
 
     case STATES.AWAIT_PHOTO:
-      await askAmount(
+      await askCheckAction(
         chatId,
         userId,
-        omitFormFields(session.data, ['amount', 'photos', 'photoUrl', 'photoFileName', 'photoAttachmentPayload', 'missedReason'])
+        omitFormFields(session.data, ['photos', 'photoUrl', 'photoFileName', 'photoAttachmentPayload'])
       );
       return;
 
     case STATES.AWAIT_MISSED_REASON:
-      await askPhoto(chatId, userId, omitFormFields(session.data, ['missedReason']));
+      await askAmount(chatId, userId, omitFormFields(session.data, ['amount', 'missedReason']));
       return;
 
     case STATES.AWAIT_CHECK_ACTION: {
@@ -481,7 +491,7 @@ async function handleFormBack(chatId, userId, session) {
       return;
 
     case STATES.CONFIRM:
-      await askCheckAction(chatId, userId, session.data);
+      await askPhoto(chatId, userId, session.data);
       return;
 
     default:
@@ -738,12 +748,9 @@ async function handleCallback(update, chatId, userId, session) {
     await deleteCallbackMessage(update);
     const data = { ...session.data, photos };
 
-    if (data.eventType === EVENT_TYPES.MISSED_THEFT) {
-      await askMissedReason(chatId, userId, data);
-      return;
+    if (!(await showConfirm(chatId, userId, data))) {
+      await startOnboarding(chatId, userId);
     }
-
-    await askCheckAction(chatId, userId, appendCurrentEvent(data));
     return;
   }
 
@@ -792,9 +799,7 @@ async function handleCallback(update, chatId, userId, session) {
     }
 
     await deleteCallbackMessage(update);
-    if (!(await showConfirm(chatId, userId, session.data))) {
-      await startOnboarding(chatId, userId);
-    }
+    await askPhoto(chatId, userId, session.data);
     return;
   }
 
@@ -1077,17 +1082,12 @@ async function handleText(update, chatId, userId, session) {
       await cleanupMessages(userId);
       let data = { ...session.data, amount };
       data = await sendFormMessage(chatId, data, `Сумма: ${amount} руб.`);
-      if (getPhotos(data).length) {
-        if (data.eventType === EVENT_TYPES.MISSED_THEFT) {
-          await askMissedReason(chatId, userId, data);
-          return;
-        }
-
-        await askCheckAction(chatId, userId, appendCurrentEvent(data));
+      if (data.eventType === EVENT_TYPES.MISSED_THEFT) {
+        await askMissedReason(chatId, userId, data);
         return;
       }
 
-      await askPhoto(chatId, userId, data);
+      await askCheckAction(chatId, userId, appendCurrentEvent(data));
       return;
     }
 
@@ -1137,12 +1137,9 @@ async function handleText(update, chatId, userId, session) {
       data = await sendFormMessage(chatId, data, `Фото получено: ${data.photos.length}/${MAX_PHOTOS_PER_RECORD}`);
 
       if (data.photos.length >= MAX_PHOTOS_PER_RECORD) {
-        if (data.eventType === EVENT_TYPES.MISSED_THEFT) {
-          await askMissedReason(chatId, userId, data);
-          return;
+        if (!(await showConfirm(chatId, userId, data))) {
+          await startOnboarding(chatId, userId);
         }
-
-        await askCheckAction(chatId, userId, appendCurrentEvent(data));
         return;
       }
 
