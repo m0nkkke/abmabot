@@ -9,7 +9,7 @@ const {
 const { inlineKeyboard } = require('./keyboards');
 const { log, logError } = require('./logger');
 const { buildHelpText } = require('./messages');
-const { deleteMessage, sendMessage } = require('./maxClient');
+const { deleteMessage, sendMessage, sendMessageToUser } = require('./maxClient');
 const {
   getChatId,
   getPayload,
@@ -29,6 +29,7 @@ const {
   deleteSession,
   deleteUserLocalData,
   updateEmployeeShop,
+  listEmployees,
   rememberRecentShop,
   isAllowedUser
 } = require('./db');
@@ -73,7 +74,8 @@ const {
   askTextReportDate,
   askTextReportFio,
   askTextReportText,
-  buildTextReportRow
+  buildTextReportRow,
+  showTextReportConfirm
 } = require('./flows/textReportFlow');
 const {
   askKsoDate,
@@ -292,6 +294,14 @@ function buildMainMenuAttachments() {
   ]);
 }
 
+function buildBroadcastConfirmAttachments() {
+  return inlineKeyboard([
+    [{ text: '✅ Отправить всем', type: 'callback', payload: 'broadcast_send' }],
+    [{ text: '✏️ Изменить текст', type: 'callback', payload: 'broadcast_edit' }],
+    [{ text: 'Отменить', type: 'callback', payload: 'broadcast_cancel' }]
+  ]);
+}
+
 async function showMainMenu(chatId, userId, text = 'Выберите действие:') {
   await cleanupInterruptedForm(userId);
   saveSession(userId, STATES.IDLE, {});
@@ -346,6 +356,65 @@ async function sendUserId(chatId, userId) {
 async function askAccessPassword(chatId, userId) {
   saveSession(userId, STATES.AWAIT_ACCESS_PASSWORD, {});
   await sendCleanupMessage(chatId, userId, 'Введите пароль доступа, который выдал администратор.');
+}
+
+async function startBroadcastFlow(chatId, userId) {
+  if (!isAdmin(userId)) {
+    await sendMessage(chatId, 'Команда доступна только администратору.');
+    return;
+  }
+
+  saveSession(userId, STATES.AWAIT_BROADCAST_TEXT, {});
+  await sendCleanupMessage(
+    chatId,
+    userId,
+    'Введите текст сообщения для рассылки активным пользователям бота.',
+    inlineKeyboard([[{ text: 'Отменить', type: 'callback', payload: 'broadcast_cancel' }]])
+  );
+}
+
+async function showBroadcastConfirm(chatId, userId, data) {
+  const recipientsCount = listEmployees().filter((employee) => employee.active === 1).length;
+  saveSession(userId, STATES.BROADCAST_CONFIRM, data);
+  await sendKeyboardMessage(
+    chatId,
+    userId,
+    [
+      'Проверьте текст рассылки:',
+      '',
+      data.broadcastText,
+      '',
+      `Получателей: ${recipientsCount}`
+    ].join('\n'),
+    buildBroadcastConfirmAttachments()
+  );
+}
+
+async function sendBroadcast(text) {
+  const recipients = listEmployees().filter((employee) => employee.active === 1);
+  const messageText = [
+    'Информационное сообщение от администратора:',
+    '',
+    text
+  ].join('\n');
+  let successCount = 0;
+  const failed = [];
+
+  for (const recipient of recipients) {
+    try {
+      await sendMessageToUser(recipient.user_id, messageText);
+      successCount += 1;
+    } catch (error) {
+      failed.push(recipient.user_id);
+      logError(`Не удалось отправить рассылку пользователю ${recipient.user_id}:`, error);
+    }
+  }
+
+  return {
+    failed,
+    totalCount: recipients.length,
+    successCount
+  };
 }
 
 async function startOnboarding(chatId, userId) {
@@ -542,6 +611,10 @@ async function handleFormBack(chatId, userId, session) {
       await askTextReportDate(chatId, userId, omitFormFields(session.data, ['date', 'reportText']));
       return;
 
+    case STATES.TEXT_REPORT_CONFIRM:
+      await askTextReportText(chatId, userId, omitFormFields(session.data, ['reportText']));
+      return;
+
     case STATES.AWAIT_KSO_DATE:
       await showMainMenu(chatId, userId);
       return;
@@ -564,6 +637,11 @@ async function handleFormBack(chatId, userId, session) {
 
     case STATES.TECH_REPORT_CONFIRM:
       await askTechReportText(chatId, userId, omitFormFields(session.data, ['techReportText']));
+      return;
+
+    case STATES.AWAIT_BROADCAST_TEXT:
+    case STATES.BROADCAST_CONFIRM:
+      await startFlow(chatId, userId);
       return;
 
     case STATES.CONFIRM:
@@ -595,6 +673,48 @@ async function handleCallback(update, chatId, userId, session) {
 
   if (payload === 'change_profile') {
     await handleProfileReset(chatId, userId);
+    return;
+  }
+
+  if (payload === 'broadcast_cancel') {
+    await deleteCallbackMessage(update);
+    deleteSession(userId);
+    await sendMessage(chatId, 'Рассылка отменена.');
+    return;
+  }
+
+  if (payload === 'broadcast_edit') {
+    await deleteCallbackMessage(update);
+    await startBroadcastFlow(chatId, userId);
+    return;
+  }
+
+  if (payload === 'broadcast_send') {
+    const currentSession = getSession(userId);
+
+    if (!isAdmin(userId)) {
+      await sendMessage(chatId, 'Команда доступна только администратору.');
+      return;
+    }
+
+    if (!currentSession || currentSession.state !== STATES.BROADCAST_CONFIRM || !currentSession.data.broadcastText) {
+      await sendMessage(chatId, 'Текст рассылки не найден. Начните заново командой /message.');
+      return;
+    }
+
+    await deleteCallbackMessage(update);
+    await sendCleanupMessage(chatId, userId, 'Отправляю рассылку, пожалуйста подождите...');
+    const result = await sendBroadcast(currentSession.data.broadcastText);
+    await cleanupMessages(userId);
+    deleteSession(userId);
+    await sendMessage(
+      chatId,
+      [
+        'Рассылка завершена.',
+        `Отправлено: ${result.successCount}/${result.totalCount}`,
+        result.failed.length ? `Не удалось отправить: ${result.failed.join(', ')}` : ''
+      ].filter(Boolean).join('\n')
+    );
     return;
   }
 
@@ -926,6 +1046,41 @@ async function handleCallback(update, chatId, userId, session) {
     return;
   }
 
+  if (payload === 'text_report_restart') {
+    await deleteCallbackMessage(update);
+    await askTextReportDate(chatId, userId, {});
+    return;
+  }
+
+  if (payload === 'text_report_save') {
+    const currentSession = getSession(userId);
+    const profile = getProfile(userId);
+
+    if (!profile || !currentSession || currentSession.state !== STATES.TEXT_REPORT_CONFIRM) {
+      await sendMessage(chatId, 'Данные отчета для сохранения не найдены. Начнём заново.');
+      await startFlow(chatId, userId);
+      return;
+    }
+
+    try {
+      await sendCleanupMessage(chatId, userId, 'Сохраняю отчет в Google Sheets, пожалуйста подождите...');
+      await appendTextReportRow(buildTextReportRow(profile, currentSession.data));
+      await cleanupMessages(userId);
+      await deleteCallbackMessage(update);
+      saveSession(userId, STATES.IDLE, {});
+      await sendKeyboardMessage(
+        chatId,
+        userId,
+        '✅ Отчет сохранен.',
+        buildRepeatOrMenuAttachments('new_text_report', '+ Новый отчет')
+      );
+    } catch (error) {
+      logError('Не удалось сохранить текстовый отчет в Google Sheets:', error);
+      await sendMessage(chatId, 'Не удалось записать отчет в Google Sheets. Попробуйте сохранить ещё раз позже.');
+    }
+    return;
+  }
+
   if (payload === 'kso_save') {
     const currentSession = getSession(userId);
     const profile = getProfile(userId);
@@ -1038,6 +1193,11 @@ async function handleText(update, chatId, userId, session) {
 
   if (isTextReportCommand(text)) {
     await startTextReportFlow(chatId, userId);
+    return;
+  }
+
+  if (text === '/message') {
+    await startBroadcastFlow(chatId, userId);
     return;
   }
 
@@ -1185,33 +1345,43 @@ async function handleText(update, chatId, userId, session) {
         return;
       }
 
-      const data = { ...session.data, reportText: text };
-      const profile = getProfile(userId);
-
-      if (!profile) {
+      await deleteStoredKeyboard(userId);
+      await cleanupMessages(userId);
+      let data = { ...session.data, reportText: text };
+      data = await sendFormMessage(chatId, data, `Отчет:\n${text}`);
+      if (!(await showTextReportConfirm(chatId, userId, data))) {
         await sendMessage(chatId, 'Профиль не найден. Введите ФИО ещё раз.');
         await askTextReportFio(chatId, userId, { continueToTextReport: true });
-        return;
-      }
-
-      try {
-        await cleanupMessages(userId);
-        await sendCleanupMessage(chatId, userId, 'Сохраняю отчет в Google Sheets, пожалуйста подождите...');
-        await appendTextReportRow(buildTextReportRow(profile, data));
-        await cleanupMessages(userId);
-        saveSession(userId, STATES.IDLE, {});
-        await sendKeyboardMessage(
-          chatId,
-          userId,
-          '✅ Отчет сохранен.',
-          buildRepeatOrMenuAttachments('new_text_report', '+ Новый отчет')
-        );
-      } catch (error) {
-        logError('Не удалось сохранить текстовый отчет в Google Sheets:', error);
-        await sendMessage(chatId, 'Не удалось записать отчет в Google Sheets. Попробуйте отправить текст отчета ещё раз позже.');
       }
       return;
     }
+
+    case STATES.TEXT_REPORT_CONFIRM:
+      await sendMessage(chatId, 'Нажмите «Сохранить», чтобы записать отчет, или «Исправить», чтобы вернуться к тексту.');
+      return;
+
+    case STATES.AWAIT_BROADCAST_TEXT: {
+      if (!isAdmin(userId)) {
+        await sendMessage(chatId, 'Команда доступна только администратору.');
+        await startFlow(chatId, userId);
+        return;
+      }
+
+      if (!text) {
+        await cleanupMessages(userId);
+        await sendMessage(chatId, 'Введите непустой текст рассылки.');
+        await startBroadcastFlow(chatId, userId);
+        return;
+      }
+
+      await cleanupMessages(userId);
+      await showBroadcastConfirm(chatId, userId, { broadcastText: text });
+      return;
+    }
+
+    case STATES.BROADCAST_CONFIRM:
+      await sendMessage(chatId, 'Подтвердите рассылку кнопкой или отмените её.');
+      return;
 
     case STATES.AWAIT_KSO_DATE: {
       if (!isValidDate(text)) {
@@ -1492,7 +1662,7 @@ async function handleUpdate(update) {
     }
 
     if (update.update_type === 'message_callback') {
-      if (!['confirm_save', 'new_record', 'new_text_report', 'new_kso_report', 'new_tech_report'].includes(getPayload(update))) {
+      if (!['confirm_save', 'text_report_save', 'broadcast_send', 'new_record', 'new_text_report', 'new_kso_report', 'new_tech_report'].includes(getPayload(update))) {
         await removeCallbackKeyboard(update);
       }
       await handleCallback(update, chatId, userId, session);

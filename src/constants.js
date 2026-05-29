@@ -36,6 +36,7 @@ const BOT_COMMANDS = [
   { name: 'revoke', description: 'Отозвать согласие и удалить локальные данные' },
   { name: 'sheet', description: 'Ссылка на Google Таблицу' },
   { name: 'employees', description: 'Список сотрудников' },
+  { name: 'message', description: 'Админ: рассылка сообщения пользователям' },
   { name: 'setfio', description: 'Админ: изменить ФИО сотрудника' },
   { name: 'block', description: 'Админ: отключить доступ сотруднику' }
 ];
