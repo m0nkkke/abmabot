@@ -4,7 +4,8 @@ const {
   grantAccessByPassword,
   hasConfiguredPasswords,
   handleAdminCommand,
-  isAdmin
+  isAdmin,
+  ROLE_LABELS
 } = require('./access');
 const { inlineKeyboard } = require('./keyboards');
 const { log, logError } = require('./logger');
@@ -1206,6 +1207,11 @@ async function handleText(update, chatId, userId, session) {
     return;
   }
 
+  if (text === '/password') {
+    await askAccessPassword(chatId, userId);
+    return;
+  }
+
   if (await handleAdminCommand(chatId, userId, text, GOOGLE_SHEET_URL)) {
     return;
   }
@@ -1240,7 +1246,11 @@ async function handleText(update, chatId, userId, session) {
       }
 
       await cleanupMessages(userId);
-      await startFlow(chatId, userId);
+      await showMainMenu(
+        chatId,
+        userId,
+        `Пароль принят. Текущая роль: ${ROLE_LABELS[role] || role}.\n\nВыберите действие:`
+      );
       return;
     }
 

@@ -32,6 +32,7 @@ const BOT_COMMANDS = [
   { name: 'id', description: 'Показать мой MAX user_id' },
   { name: 'help', description: 'Показать справку по командам' },
   { name: 'profile', description: 'Изменить ФИО' },
+  { name: 'password', description: 'Сменить роль по паролю доступа' },
   { name: 'privacy', description: 'Информация об обработке персональных данных' },
   { name: 'revoke', description: 'Отозвать согласие и удалить локальные данные' },
   { name: 'sheet', description: 'Ссылка на Google Таблицу' },
