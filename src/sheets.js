@@ -3,9 +3,12 @@ const { MAX_PHOTOS_PER_RECORD } = require('./constants');
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const REPORTS_SHEET_ID = process.env.GOOGLE_REPORTS_SHEET_ID || process.env.GOOGLE_REPORT_SHEET_ID || '';
+const TECH_REPORTS_SHEET_ID = process.env.GOOGLE_TECH_REPORTS_SHEET_ID || '';
 const CREDENTIALS_PATH = process.env.GOOGLE_CREDENTIALS_PATH || './credentials/service-account.json';
 const DATA_SHEET_NAME = 'Данные';
 const REPORTS_SHEET_NAME = process.env.GOOGLE_REPORTS_SHEET_NAME || 'Отчеты';
+const KSO_SHEET_NAME = process.env.GOOGLE_KSO_SHEET_NAME || 'Отписки КСО';
+const TECH_REPORTS_SHEET_NAME = process.env.GOOGLE_TECH_REPORTS_SHEET_NAME || 'Тех. неполадки';
 const BASE_HEADERS = [
   'ФИО',
   'Регион',
@@ -24,12 +27,20 @@ const PHOTO_HEADERS = Array.from({ length: MAX_PHOTOS_PER_RECORD }, (_, index) =
 }).flat();
 const HEADERS = [...BASE_HEADERS, ...PHOTO_HEADERS];
 const REPORT_HEADERS = ['ФИО', 'Дата', 'Отчет'];
+const KSO_HEADERS = ['ФИО', 'Дата', 'Отписка КСО'];
+const TECH_REPORT_HEADERS = ['ФИО', 'Дата', 'Техническая неполадка'];
 const HEADER_END_COLUMN = columnNameByIndex(HEADERS.length);
 const DATA_RANGE = `A:${HEADER_END_COLUMN}`;
 const HEADER_RANGE = `A1:${HEADER_END_COLUMN}1`;
 const REPORT_HEADER_END_COLUMN = columnNameByIndex(REPORT_HEADERS.length);
 const REPORT_DATA_RANGE = `A:${REPORT_HEADER_END_COLUMN}`;
 const REPORT_HEADER_RANGE = `A1:${REPORT_HEADER_END_COLUMN}1`;
+const KSO_HEADER_END_COLUMN = columnNameByIndex(KSO_HEADERS.length);
+const KSO_DATA_RANGE = `A:${KSO_HEADER_END_COLUMN}`;
+const KSO_HEADER_RANGE = `A1:${KSO_HEADER_END_COLUMN}1`;
+const TECH_REPORT_HEADER_END_COLUMN = columnNameByIndex(TECH_REPORT_HEADERS.length);
+const TECH_REPORT_DATA_RANGE = `A:${TECH_REPORT_HEADER_END_COLUMN}`;
+const TECH_REPORT_HEADER_RANGE = `A1:${TECH_REPORT_HEADER_END_COLUMN}1`;
 const GOOGLE_REQUEST_TIMEOUT_MS = Number(process.env.GOOGLE_REQUEST_TIMEOUT_MS || 20000);
 const MIN_EXTRA_ROWS = 1000;
 const MIN_EXTRA_COLUMNS = 5;
@@ -114,6 +125,14 @@ function getReportsSheetId() {
   }
 
   return REPORTS_SHEET_ID;
+}
+
+function getTechReportsSheetId() {
+  if (!TECH_REPORTS_SHEET_ID) {
+    throw new Error('Не задана переменная окружения GOOGLE_TECH_REPORTS_SHEET_ID');
+  }
+
+  return TECH_REPORTS_SHEET_ID;
 }
 
 async function ensureShopSheet(sheets, shop) {
@@ -279,6 +298,170 @@ async function ensureTextReportSheet(sheets) {
   );
 }
 
+async function ensureKsoReportSheet(sheets) {
+  const spreadsheetId = getReportsSheetId();
+  log('Google Sheets: проверяем лист отписок КСО.', { sheet: KSO_SHEET_NAME });
+
+  const spreadsheet = await withTimeout(
+    sheets.spreadsheets.get({
+      spreadsheetId
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'получение метаданных таблицы отписок КСО'
+  );
+
+  const existingSheet = spreadsheet.data.sheets.find((sheet) => {
+    return sheet.properties && sheet.properties.title === KSO_SHEET_NAME;
+  });
+
+  if (!existingSheet) {
+    await withTimeout(
+      sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [
+            {
+              addSheet: {
+                properties: {
+                  title: KSO_SHEET_NAME
+                }
+              }
+            }
+          ]
+        }
+      }, {
+        timeout: GOOGLE_REQUEST_TIMEOUT_MS
+      }),
+      'создание листа отписок КСО'
+    );
+  }
+
+  await ensureKsoReportGridSize(sheets, 1, KSO_HEADERS.length);
+
+  const headerResponse = await withTimeout(
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${escapeSheetName(KSO_SHEET_NAME)}'!${KSO_HEADER_RANGE}`
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'получение заголовков листа отписок КСО'
+  );
+  const currentHeaders = headerResponse.data.values?.[0] || [];
+  const headersAreActual = KSO_HEADERS.every((header, index) => currentHeaders[index] === header);
+
+  if (headersAreActual) {
+    return;
+  }
+
+  await withTimeout(
+    sheets.spreadsheets.values.clear({
+      spreadsheetId,
+      range: `'${escapeSheetName(KSO_SHEET_NAME)}'!${KSO_HEADER_RANGE}`
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'очистка старой строки заголовков листа отписок КСО'
+  );
+
+  await withTimeout(
+    sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${escapeSheetName(KSO_SHEET_NAME)}'!${KSO_HEADER_RANGE}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [KSO_HEADERS]
+      }
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'обновление заголовков листа отписок КСО'
+  );
+}
+
+async function ensureTechReportSheet(sheets) {
+  const spreadsheetId = getTechReportsSheetId();
+  log('Google Sheets: проверяем лист технических неполадок.', { sheet: TECH_REPORTS_SHEET_NAME });
+
+  const spreadsheet = await withTimeout(
+    sheets.spreadsheets.get({
+      spreadsheetId
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'получение метаданных таблицы технических неполадок'
+  );
+
+  const existingSheet = spreadsheet.data.sheets.find((sheet) => {
+    return sheet.properties && sheet.properties.title === TECH_REPORTS_SHEET_NAME;
+  });
+
+  if (!existingSheet) {
+    await withTimeout(
+      sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [
+            {
+              addSheet: {
+                properties: {
+                  title: TECH_REPORTS_SHEET_NAME
+                }
+              }
+            }
+          ]
+        }
+      }, {
+        timeout: GOOGLE_REQUEST_TIMEOUT_MS
+      }),
+      'создание листа технических неполадок'
+    );
+  }
+
+  await ensureTechReportGridSize(sheets, 1, TECH_REPORT_HEADERS.length);
+
+  const headerResponse = await withTimeout(
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${escapeSheetName(TECH_REPORTS_SHEET_NAME)}'!${TECH_REPORT_HEADER_RANGE}`
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'получение заголовков листа технических неполадок'
+  );
+  const currentHeaders = headerResponse.data.values?.[0] || [];
+  const headersAreActual = TECH_REPORT_HEADERS.every((header, index) => currentHeaders[index] === header);
+
+  if (headersAreActual) {
+    return;
+  }
+
+  await withTimeout(
+    sheets.spreadsheets.values.clear({
+      spreadsheetId,
+      range: `'${escapeSheetName(TECH_REPORTS_SHEET_NAME)}'!${TECH_REPORT_HEADER_RANGE}`
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'очистка старой строки заголовков листа технических неполадок'
+  );
+
+  await withTimeout(
+    sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${escapeSheetName(TECH_REPORTS_SHEET_NAME)}'!${TECH_REPORT_HEADER_RANGE}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [TECH_REPORT_HEADERS]
+      }
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'обновление заголовков листа технических неполадок'
+  );
+}
+
 function findNextDataRow(values) {
   const rows = values || [];
 
@@ -428,6 +611,144 @@ async function ensureTextReportGridSize(sheets, minRows, minColumns = REPORT_HEA
   );
 }
 
+async function getKsoReportSheetProperties(sheets) {
+  const spreadsheetId = getReportsSheetId();
+  const spreadsheet = await withTimeout(
+    sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: 'sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))'
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `получение свойств листа ${KSO_SHEET_NAME}`
+  );
+
+  const sheet = spreadsheet.data.sheets.find((item) => {
+    return item.properties && item.properties.title === KSO_SHEET_NAME;
+  });
+
+  if (!sheet?.properties) {
+    throw new Error(`Лист ${KSO_SHEET_NAME} не найден`);
+  }
+
+  return sheet.properties;
+}
+
+async function ensureKsoReportGridSize(sheets, minRows, minColumns = KSO_HEADERS.length) {
+  const spreadsheetId = getReportsSheetId();
+  const properties = await getKsoReportSheetProperties(sheets);
+  const rowCount = properties.gridProperties?.rowCount || 0;
+  const columnCount = properties.gridProperties?.columnCount || 0;
+
+  if (rowCount >= minRows && columnCount >= minColumns) {
+    return;
+  }
+
+  const targetRows = rowCount >= minRows ? rowCount : minRows + MIN_EXTRA_ROWS;
+  const targetColumns = columnCount >= minColumns ? columnCount : minColumns + MIN_EXTRA_COLUMNS;
+  log('Google Sheets: расширяем лист отписок КСО перед записью.', {
+    sheetName: KSO_SHEET_NAME,
+    currentRows: rowCount,
+    currentColumns: columnCount,
+    targetRows,
+    targetColumns
+  });
+
+  await withTimeout(
+    sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [
+          {
+            updateSheetProperties: {
+              properties: {
+                sheetId: properties.sheetId,
+                gridProperties: {
+                  rowCount: targetRows,
+                  columnCount: targetColumns
+                }
+              },
+              fields: 'gridProperties.rowCount,gridProperties.columnCount'
+            }
+          }
+        ]
+      }
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `расширение листа отписок КСО до ${targetRows} строк и ${targetColumns} колонок`
+  );
+}
+
+async function getTechReportSheetProperties(sheets) {
+  const spreadsheetId = getTechReportsSheetId();
+  const spreadsheet = await withTimeout(
+    sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: 'sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))'
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `получение свойств листа ${TECH_REPORTS_SHEET_NAME}`
+  );
+
+  const sheet = spreadsheet.data.sheets.find((item) => {
+    return item.properties && item.properties.title === TECH_REPORTS_SHEET_NAME;
+  });
+
+  if (!sheet?.properties) {
+    throw new Error(`Лист ${TECH_REPORTS_SHEET_NAME} не найден`);
+  }
+
+  return sheet.properties;
+}
+
+async function ensureTechReportGridSize(sheets, minRows, minColumns = TECH_REPORT_HEADERS.length) {
+  const spreadsheetId = getTechReportsSheetId();
+  const properties = await getTechReportSheetProperties(sheets);
+  const rowCount = properties.gridProperties?.rowCount || 0;
+  const columnCount = properties.gridProperties?.columnCount || 0;
+
+  if (rowCount >= minRows && columnCount >= minColumns) {
+    return;
+  }
+
+  const targetRows = rowCount >= minRows ? rowCount : minRows + MIN_EXTRA_ROWS;
+  const targetColumns = columnCount >= minColumns ? columnCount : minColumns + MIN_EXTRA_COLUMNS;
+  log('Google Sheets: расширяем лист технических неполадок перед записью.', {
+    sheetName: TECH_REPORTS_SHEET_NAME,
+    currentRows: rowCount,
+    currentColumns: columnCount,
+    targetRows,
+    targetColumns
+  });
+
+  await withTimeout(
+    sheets.spreadsheets.batchUpdate({
+      spreadsheetId,
+      requestBody: {
+        requests: [
+          {
+            updateSheetProperties: {
+              properties: {
+                sheetId: properties.sheetId,
+                gridProperties: {
+                  rowCount: targetRows,
+                  columnCount: targetColumns
+                }
+              },
+              fields: 'gridProperties.rowCount,gridProperties.columnCount'
+            }
+          }
+        ]
+      }
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `расширение листа технических неполадок до ${targetRows} строк и ${targetColumns} колонок`
+  );
+}
+
 async function writeRowToNextFreeLine(sheets, sheetName, row) {
   const escapedSheetName = escapeSheetName(sheetName);
   const valuesResponse = await withTimeout(
@@ -496,6 +817,78 @@ async function writeTextReportToNextFreeLine(sheets, row) {
   );
 }
 
+async function writeKsoReportToNextFreeLine(sheets, row) {
+  const spreadsheetId = getReportsSheetId();
+  const escapedSheetName = escapeSheetName(KSO_SHEET_NAME);
+  const valuesResponse = await withTimeout(
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${escapedSheetName}'!${KSO_DATA_RANGE}`,
+      majorDimension: 'ROWS'
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `поиск свободной строки на листе ${KSO_SHEET_NAME}`
+  );
+
+  const nextRow = findNextDataRow(valuesResponse.data.values);
+  await ensureKsoReportGridSize(sheets, nextRow, KSO_HEADERS.length);
+  log('Google Sheets: записываем отписку КСО в явный диапазон.', {
+    sheetName: KSO_SHEET_NAME,
+    row: nextRow
+  });
+
+  await withTimeout(
+    sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${escapedSheetName}'!A${nextRow}:${KSO_HEADER_END_COLUMN}${nextRow}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [row]
+      }
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `запись строки ${nextRow} на лист ${KSO_SHEET_NAME}`
+  );
+}
+
+async function writeTechReportToNextFreeLine(sheets, row) {
+  const spreadsheetId = getTechReportsSheetId();
+  const escapedSheetName = escapeSheetName(TECH_REPORTS_SHEET_NAME);
+  const valuesResponse = await withTimeout(
+    sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: `'${escapedSheetName}'!${TECH_REPORT_DATA_RANGE}`,
+      majorDimension: 'ROWS'
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `поиск свободной строки на листе ${TECH_REPORTS_SHEET_NAME}`
+  );
+
+  const nextRow = findNextDataRow(valuesResponse.data.values);
+  await ensureTechReportGridSize(sheets, nextRow, TECH_REPORT_HEADERS.length);
+  log('Google Sheets: записываем техническую неполадку в явный диапазон.', {
+    sheetName: TECH_REPORTS_SHEET_NAME,
+    row: nextRow
+  });
+
+  await withTimeout(
+    sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: `'${escapedSheetName}'!A${nextRow}:${TECH_REPORT_HEADER_END_COLUMN}${nextRow}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [row]
+      }
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `запись строки ${nextRow} на лист ${TECH_REPORTS_SHEET_NAME}`
+  );
+}
+
 async function appendRow(shop, row) {
   try {
     if (!SHEET_ID) {
@@ -530,4 +923,30 @@ async function appendTextReportRow(row) {
   }
 }
 
-module.exports = { appendRow, appendTextReportRow };
+async function appendKsoReportRow(row) {
+  try {
+    log('Google Sheets: начинаем запись отписки КСО.', { sheet: KSO_SHEET_NAME });
+    const sheets = getSheetsClient();
+    await ensureKsoReportSheet(sheets);
+    await writeKsoReportToNextFreeLine(sheets, row);
+    log('Google Sheets: отписка КСО успешно записана.', { sheet: KSO_SHEET_NAME });
+  } catch (error) {
+    logError('Ошибка записи отписки КСО в Google Sheets:', error);
+    throw error;
+  }
+}
+
+async function appendTechReportRow(row) {
+  try {
+    log('Google Sheets: начинаем запись технической неполадки.', { sheet: TECH_REPORTS_SHEET_NAME });
+    const sheets = getSheetsClient();
+    await ensureTechReportSheet(sheets);
+    await writeTechReportToNextFreeLine(sheets, row);
+    log('Google Sheets: техническая неполадка успешно записана.', { sheet: TECH_REPORTS_SHEET_NAME });
+  } catch (error) {
+    logError('Ошибка записи технической неполадки в Google Sheets:', error);
+    throw error;
+  }
+}
+
+module.exports = { appendRow, appendTextReportRow, appendKsoReportRow, appendTechReportRow };
