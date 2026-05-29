@@ -281,7 +281,10 @@ function buildMainMenuAttachments() {
       { text: 'Фиксация', type: 'callback', payload: 'main_fixation' }
     ],
     [
-      { text: 'Отчет КСО', type: 'callback', payload: 'main_kso_report' }
+      { text: 'Отчет', type: 'callback', payload: 'main_text_report' }
+    ],
+    [
+      { text: 'Отписка КСО', type: 'callback', payload: 'main_kso_report' }
     ],
     [
       { text: 'Отчет ТН', type: 'callback', payload: 'main_tech_report' }
