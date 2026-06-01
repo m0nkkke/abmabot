@@ -23,7 +23,8 @@ const VIOLATION_TYPES = {
   OVERCHARGE: 'Перебитие',
   BAG: 'Пакет',
   CONTAINER: 'Контейнер',
-  RESORT: 'Пересорт'
+  RESORT: 'Пересорт',
+  WRONG_BARCODE: 'Неверная штриховка'
 };
 
 const BOT_COMMANDS = [

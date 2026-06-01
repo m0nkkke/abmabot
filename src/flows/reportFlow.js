@@ -67,6 +67,7 @@ async function askViolationType(chatId, userId, data = {}) {
       [{ text: VIOLATION_TYPES.BAG, type: 'callback', payload: 'violation_type_bag' }],
       [{ text: VIOLATION_TYPES.CONTAINER, type: 'callback', payload: 'violation_type_container' }],
       [{ text: VIOLATION_TYPES.RESORT, type: 'callback', payload: 'violation_type_resort' }],
+      [{ text: VIOLATION_TYPES.WRONG_BARCODE, type: 'callback', payload: 'violation_type_wrong_barcode' }],
       backButtonRow()
     ])
   );
@@ -103,6 +104,7 @@ async function askCheckAction(chatId, userId, data = {}) {
       `${formatEventRows(data).join('\n')}\n\nДобавить еще событие в этот чек?`,
       inlineKeyboard([
         [{ text: '+ Кража', type: 'callback', payload: 'check_add_theft' }],
+        [{ text: '+ Упущенная кража', type: 'callback', payload: 'check_add_missed_theft' }],
         [{ text: '+ Нарушение', type: 'callback', payload: 'check_add_violation' }],
         [{ text: 'Перейти к фото', type: 'callback', payload: 'check_finish' }],
         backButtonRow()

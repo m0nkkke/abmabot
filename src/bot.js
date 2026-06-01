@@ -949,7 +949,8 @@ async function handleCallback(update, chatId, userId, session) {
       violation_type_overcharge: VIOLATION_TYPES.OVERCHARGE,
       violation_type_bag: VIOLATION_TYPES.BAG,
       violation_type_container: VIOLATION_TYPES.CONTAINER,
-      violation_type_resort: VIOLATION_TYPES.RESORT
+      violation_type_resort: VIOLATION_TYPES.RESORT,
+      violation_type_wrong_barcode: VIOLATION_TYPES.WRONG_BARCODE
     };
     const violationType = violationTypeByPayload[payload];
 
@@ -999,6 +1000,22 @@ async function handleCallback(update, chatId, userId, session) {
       eventType: EVENT_TYPES.THEFT
     };
     data = await sendFormMessage(chatId, data, `Тип фиксации: ${EVENT_TYPES.THEFT}`);
+    await askAmount(chatId, userId, data);
+    return;
+  }
+
+  if (payload === 'check_add_missed_theft') {
+    if (!session || session.state !== STATES.AWAIT_CHECK_ACTION) {
+      await askCheckAction(chatId, userId, session?.data || {});
+      return;
+    }
+
+    await deleteCallbackMessage(update);
+    let data = {
+      ...session.data,
+      eventType: EVENT_TYPES.MISSED_THEFT
+    };
+    data = await sendFormMessage(chatId, data, `Тип фиксации: ${EVENT_TYPES.MISSED_THEFT}`);
     await askAmount(chatId, userId, data);
     return;
   }
