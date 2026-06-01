@@ -1,38 +1,26 @@
-const shops = require('./shops.json');
-
-function validateShop(shop, index) {
-  if (!shop || typeof shop !== 'object') {
-    throw new Error(`Магазин с индексом ${index} должен быть объектом`);
-  }
-
-  if (!shop.name || typeof shop.name !== 'string') {
-    throw new Error(`У магазина с индексом ${index} не заполнено поле name`);
-  }
-
-  if (typeof shop.address !== 'string') {
-    throw new Error(`У магазина с индексом ${index} поле address должно быть строкой`);
-  }
-
-  if (shop.region && typeof shop.region !== 'string') {
-    throw new Error(`У магазина с индексом ${index} поле region должно быть строкой`);
-  }
-}
-
-shops.forEach(validateShop);
+const {
+  getCatalogShop,
+  listCatalogRegions,
+  listCatalogShops,
+  listCatalogShopsByRegion
+} = require('./db');
 
 const DEFAULT_REGION = 'Республика Бурятия';
-const SHOPS = shops.map((shop) => ({
-  ...shop,
-  region: shop.region || DEFAULT_REGION
-}));
-const REGIONS = [...new Set(SHOPS.map((shop) => shop.region))];
 
 function formatShop(shop) {
   return shop.name;
 }
 
-function getShopsByRegion(region) {
-  return SHOPS.filter((shop) => shop.region === region);
+function getRegions() {
+  return listCatalogRegions();
+}
+
+function getShops() {
+  return listCatalogShops();
+}
+
+function getShopsByRegion(regionId) {
+  return listCatalogShopsByRegion(regionId);
 }
 
 function normalizeShopQuery(value) {
@@ -95,7 +83,7 @@ function searchShops(query, limit = 9) {
     return [];
   }
 
-  const scored = SHOPS.map((shop, index) => {
+  const scored = getShops().map((shop) => {
     const keys = buildShopSearchKeys(shop);
     let score = 0;
 
@@ -111,7 +99,7 @@ function searchShops(query, limit = 9) {
       }
     }
 
-    return { shop, index, score };
+    return { shop, shopId: shop.id, score };
   })
     .filter((item) => item.score > 0)
     .sort((left, right) => right.score - left.score || left.shop.name.localeCompare(right.shop.name, 'ru'));
@@ -121,9 +109,10 @@ function searchShops(query, limit = 9) {
 
 module.exports = {
   DEFAULT_REGION,
-  REGIONS,
-  SHOPS,
   formatShop,
+  getCatalogShop,
+  getRegions,
+  getShops,
   getShopsByRegion,
   normalizeShopQuery,
   searchShops

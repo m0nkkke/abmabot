@@ -1,3 +1,4 @@
+const { randomUUID } = require('crypto');
 const { STATES } = require('./states');
 const { EVENT_TYPES, MAX_PHOTOS_PER_RECORD, VIOLATION_TYPES } = require('./constants');
 const {
@@ -23,6 +24,14 @@ const {
 const { isValidDate, parseAmount, todayMskPlus5 } = require('./validators');
 const {
   getProfile,
+  getCatalogRegion,
+  getCatalogShop,
+  addCatalogRegion,
+  renameCatalogRegion,
+  deleteCatalogRegion,
+  addCatalogShop,
+  updateCatalogShop,
+  deleteCatalogShop,
   saveProfile,
   deleteProfile,
   getSession,
@@ -31,10 +40,12 @@ const {
   deleteUserLocalData,
   updateEmployeeShop,
   listEmployees,
+  listRecentFixations,
   rememberRecentShop,
+  saveRecentFixation,
   isAllowedUser
 } = require('./db');
-const { appendKsoReportRow, appendRow, appendTechReportRow, appendTextReportRow } = require('./sheets');
+const { appendKsoReportRow, appendRow, appendTechReportRow, appendTextReportRow, replaceFixationRows } = require('./sheets');
 const {
   acceptConsent,
   askConsent,
@@ -54,7 +65,6 @@ const {
   sendCleanupMessage
 } = require('./flows/cleanupFlow');
 const {
-  getRegionByPayload,
   getShopByPayload,
   showRegionPage,
   showShopSearchResults,
@@ -92,6 +102,14 @@ const {
 } = require('./flows/techIssueFlow');
 const { savePhotoFromUpdate } = require('./photos');
 const { searchShops } = require('./shops');
+const {
+  askAdminRegionName,
+  askAdminShopData,
+  showAdminCatalogDeleteConfirm,
+  showAdminCatalogMenu,
+  showAdminCatalogRegions,
+  showAdminCatalogShops
+} = require('./flows/adminCatalogFlow');
 
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || '';
 const GOOGLE_SHEET_URL = process.env.GOOGLE_SHEET_URL || (GOOGLE_SHEET_ID ? `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/edit` : '');
@@ -203,7 +221,7 @@ function popLastEvent(data) {
   return nextData;
 }
 
-function buildSheetRow(profile, data, event) {
+function buildSheetRow(profile, data, event, fixationId, recordId) {
   return [
     profile.fio,
     data.region || '',
@@ -215,12 +233,23 @@ function buildSheetRow(profile, data, event) {
     event.eventType === EVENT_TYPES.MISSED_THEFT ? event.amount : '',
     event.eventType === EVENT_TYPES.VIOLATION ? event.amount : '',
     event.missedReason || '',
-    ...buildPhotoCells(data)
+    ...buildPhotoCells(data),
+    fixationId,
+    recordId
   ];
 }
 
 function buildSheetRows(profile, data) {
-  return getEvents(data).map((event) => buildSheetRow(profile, data, event));
+  const fixationId = data.editFixationId || randomUUID();
+  return getEvents(data).map((event) => {
+    const recordId = randomUUID();
+    return {
+      event,
+      fixationId,
+      recordId,
+      row: buildSheetRow(profile, data, event, fixationId, recordId)
+    };
+  });
 }
 
 function buildEventSummaryRows(data) {
@@ -291,6 +320,9 @@ function buildMainMenuAttachments() {
     ],
     [
       { text: 'Отчет ТН', type: 'callback', payload: 'main_tech_report' }
+    ],
+    [
+      { text: 'Изменить запись', type: 'callback', payload: 'main_edit_record' }
     ]
   ]);
 }
@@ -307,6 +339,50 @@ async function showMainMenu(chatId, userId, text = 'Выберите дейст�
   await cleanupInterruptedForm(userId);
   saveSession(userId, STATES.IDLE, {});
   await sendKeyboardMessage(chatId, userId, text, buildMainMenuAttachments());
+}
+
+function formatRecentFixation(fixation, index) {
+  const data = fixation.data || {};
+  const events = Array.isArray(data.events) ? data.events : [];
+  return `${index + 1}. ${data.date || 'Без даты'} · ${data.shop || 'Без магазина'} · событий: ${events.length}`;
+}
+
+async function showRecentFixations(chatId, userId) {
+  const recentFixations = listRecentFixations(userId, 5);
+
+  if (!recentFixations.length) {
+    await sendMessage(chatId, 'У вас пока нет фиксаций, доступных для изменения.');
+    await showMainMenu(chatId, userId);
+    return;
+  }
+
+  saveSession(userId, STATES.IDLE, { recentFixations });
+  await sendKeyboardMessage(
+    chatId,
+    userId,
+    'Выберите фиксацию, которую нужно изменить:',
+    inlineKeyboard([
+      ...recentFixations.map((fixation, index) => ([
+        { text: formatRecentFixation(fixation, index), type: 'callback', payload: `edit_fixation_${index}` }
+      ])),
+      [{ text: '← В меню', type: 'callback', payload: 'main_menu' }]
+    ])
+  );
+}
+
+function buildRecentFixationData(data, events) {
+  return {
+    region: data.region || '',
+    shop: data.shop || '',
+    date: data.date || '',
+    item: data.item || '',
+    events: events.map((event) => ({
+      eventType: event.eventType,
+      violationType: event.violationType || '',
+      amount: event.amount,
+      missedReason: event.missedReason || ''
+    }))
+  };
 }
 
 function uniqueIds(ids) {
@@ -672,6 +748,130 @@ async function handleRevoke(chatId, userId) {
 async function handleCallback(update, chatId, userId, session) {
   const payload = getPayload(update);
 
+  if (payload.startsWith('admin_catalog_') && !isAdmin(userId)) {
+    await sendMessage(chatId, 'Доступ к управлению каталогом есть только у администратора.');
+    return;
+  }
+
+  if (payload === 'admin_catalog_menu') {
+    await deleteCallbackMessage(update);
+    await showAdminCatalogMenu(chatId, userId);
+    return;
+  }
+
+  if (payload === 'admin_catalog_add_region') {
+    await deleteCallbackMessage(update);
+    await askAdminRegionName(chatId, userId);
+    return;
+  }
+
+  if (payload === 'admin_catalog_edit_region' || payload === 'admin_catalog_delete_region') {
+    await deleteCallbackMessage(update);
+    await showAdminCatalogRegions(chatId, userId, payload.endsWith('edit_region') ? 'edit' : 'delete');
+    return;
+  }
+
+  if (payload === 'admin_catalog_add_shop' || payload === 'admin_catalog_edit_shop' || payload === 'admin_catalog_delete_shop') {
+    await deleteCallbackMessage(update);
+    const action = payload.includes('add_shop') ? 'add' : payload.includes('edit_shop') ? 'edit' : 'delete';
+    await showAdminCatalogRegions(chatId, userId, `${action}_shop`);
+    return;
+  }
+
+  if (payload.startsWith('admin_catalog_confirm_delete_')) {
+    const match = payload.match(/^admin_catalog_confirm_delete_(region|shop)_(\d+)$/);
+    if (!match) {
+      await showAdminCatalogMenu(chatId, userId);
+      return;
+    }
+
+    const [, entity, idText] = match;
+    const id = Number(idText);
+    await deleteCallbackMessage(update);
+
+    if (entity === 'region') {
+      const deleted = deleteCatalogRegion(id);
+      await showAdminCatalogMenu(
+        chatId,
+        userId,
+        deleted ? 'Регион удален.' : 'Нельзя удалить регион: сначала удалите все его магазины.'
+      );
+      return;
+    }
+
+    const deleted = deleteCatalogShop(id);
+    await showAdminCatalogMenu(chatId, userId, deleted ? 'Магазин удален.' : 'Магазин уже удален.');
+    return;
+  }
+
+  if (payload.startsWith('admin_catalog_region_')) {
+    const match = payload.match(/^admin_catalog_region_(edit|delete|add_shop|edit_shop|delete_shop)_(\d+)$/);
+    if (!match) {
+      await showAdminCatalogMenu(chatId, userId);
+      return;
+    }
+
+    const [, action, regionIdText] = match;
+    const regionId = Number(regionIdText);
+    await deleteCallbackMessage(update);
+
+    if (action === 'edit') {
+      await askAdminRegionName(chatId, userId, { adminCatalogRegionId: regionId });
+      return;
+    }
+
+    if (action === 'delete') {
+      const region = getCatalogRegion(regionId);
+      if (!region) {
+        await showAdminCatalogMenu(chatId, userId, 'Регион уже удален.');
+        return;
+      }
+      await showAdminCatalogDeleteConfirm(chatId, userId, 'region', region.id, region.name);
+      return;
+    }
+
+    if (action === 'add_shop') {
+      await askAdminShopData(chatId, userId, { adminCatalogRegionId: regionId });
+      return;
+    }
+
+    await showAdminCatalogShops(chatId, userId, action === 'edit_shop' ? 'edit' : 'delete', regionId);
+    return;
+  }
+
+  if (payload.startsWith('admin_catalog_shop_page_')) {
+    const match = payload.match(/^admin_catalog_shop_page_(edit|delete)_(\d+)_(\d+)$/);
+    if (match) {
+      await deleteCallbackMessage(update);
+      await showAdminCatalogShops(chatId, userId, match[1], Number(match[2]), Number(match[3]));
+    }
+    return;
+  }
+
+  if (payload.startsWith('admin_catalog_shop_')) {
+    const match = payload.match(/^admin_catalog_shop_(edit|delete)_(\d+)$/);
+    if (!match) {
+      await showAdminCatalogMenu(chatId, userId);
+      return;
+    }
+
+    const [, action, shopIdText] = match;
+    const shopId = Number(shopIdText);
+    await deleteCallbackMessage(update);
+    if (action === 'edit') {
+      await askAdminShopData(chatId, userId, { adminCatalogShopId: shopId });
+      return;
+    }
+
+    const shop = getCatalogShop(shopId);
+    if (!shop) {
+      await showAdminCatalogMenu(chatId, userId, 'Магазин уже удален.');
+      return;
+    }
+    await showAdminCatalogDeleteConfirm(chatId, userId, 'shop', shop.id, shop.name);
+    return;
+  }
+
   if (payload === 'change_profile') {
     await handleProfileReset(chatId, userId);
     return;
@@ -727,6 +927,31 @@ async function handleCallback(update, chatId, userId, session) {
 
   if (payload === 'main_fixation') {
     await startFixationFlow(chatId, userId);
+    return;
+  }
+
+  if (payload === 'main_edit_record') {
+    await deleteCallbackMessage(update);
+    await showRecentFixations(chatId, userId);
+    return;
+  }
+
+  if (payload.startsWith('edit_fixation_')) {
+    const index = Number(payload.replace('edit_fixation_', ''));
+    const fixation = session?.data?.recentFixations?.[index];
+
+    if (!fixation) {
+      await sendMessage(chatId, 'Не удалось найти выбранную фиксацию. Откройте список ещё раз.');
+      await showRecentFixations(chatId, userId);
+      return;
+    }
+
+    await deleteCallbackMessage(update);
+    await sendMessage(chatId, 'Заполните обновленные данные для выбранной записи.');
+    await showRegionPage(chatId, userId, {
+      editFixationId: fixation.fixationId,
+      editOriginalRegion: fixation.data.region || 'Без региона'
+    });
     return;
   }
 
@@ -800,7 +1025,9 @@ async function handleCallback(update, chatId, userId, session) {
   }
 
   if (payload.startsWith('region_')) {
-    const region = getRegionByPayload(payload);
+    const regionId = Number(payload.replace('region_', ''));
+    const regionItem = getCatalogRegion(regionId);
+    const region = regionItem?.name || '';
 
     if (!region) {
       await sendMessage(chatId, 'Не удалось выбрать регион. Попробуйте ещё раз.');
@@ -809,7 +1036,7 @@ async function handleCallback(update, chatId, userId, session) {
     }
 
     await deleteCallbackMessage(update);
-    let data = { ...(session?.data || {}), region };
+    let data = { ...(session?.data || {}), region, regionId };
     delete data.recentShops;
     data = await sendFormMessage(chatId, data, `Регион: ${region}`);
     await showShopPage(chatId, userId, 0, data);
@@ -820,6 +1047,7 @@ async function handleCallback(update, chatId, userId, session) {
     const selectedShop = getShopByPayload(payload);
     const shopText = selectedShop?.shopText || '';
     const region = session?.data?.region || selectedShop?.region || '';
+    const regionId = session?.data?.regionId || selectedShop?.regionId;
 
     if (session?.data?.adminEditUserId) {
       if (!shopText) {
@@ -846,7 +1074,7 @@ async function handleCallback(update, chatId, userId, session) {
     }
 
     await deleteCallbackMessage(update);
-    let data = { ...(session?.data || {}), region, shop: shopText };
+    let data = { ...(session?.data || {}), region, regionId, shop: shopText };
     delete data.recentShops;
     if (session?.data?.fio && !getProfile(userId)) {
       saveProfile(userId, session.data.fio);
@@ -1178,9 +1406,24 @@ async function handleCallback(update, chatId, userId, session) {
         return;
       }
 
-      for (const row of rows) {
-        await appendRow(currentSession.data.region || 'Без региона', row);
+      if (currentSession.data.editFixationId) {
+        await replaceFixationRows(
+          currentSession.data.editOriginalRegion || 'Без региона',
+          currentSession.data.region || 'Без региона',
+          currentSession.data.editFixationId,
+          rows.map((row) => row.row)
+        );
+      } else {
+        for (const row of rows) {
+          await appendRow(currentSession.data.region || 'Без региона', row.row);
+        }
       }
+
+      saveRecentFixation(
+        userId,
+        rows[0].fixationId,
+        buildRecentFixationData(currentSession.data, rows.map((row) => row.event))
+      );
       rememberRecentShop(userId, currentSession.data.region || 'Без региона', currentSession.data.shop || 'Не указан');
 
       await cleanupMessages(userId);
@@ -1216,6 +1459,16 @@ async function handleText(update, chatId, userId, session) {
 
   if (text === '/message') {
     await startBroadcastFlow(chatId, userId);
+    return;
+  }
+
+  if (text === '/admin') {
+    if (!isAdmin(userId)) {
+      await sendMessage(chatId, 'Команда доступна только администратору.');
+      return;
+    }
+
+    await showAdminCatalogMenu(chatId, userId);
     return;
   }
 
@@ -1304,6 +1557,7 @@ async function handleText(update, chatId, userId, session) {
         let data = {
           ...(session.data || {}),
           region: selectedShop.region,
+          regionId: selectedShop.region_id,
           shop: selectedShop.name
         };
         delete data.recentShops;
@@ -1409,6 +1663,63 @@ async function handleText(update, chatId, userId, session) {
     case STATES.BROADCAST_CONFIRM:
       await sendMessage(chatId, 'Подтвердите рассылку кнопкой или отмените её.');
       return;
+
+    case STATES.AWAIT_ADMIN_REGION_NAME: {
+      if (!isAdmin(userId)) {
+        await sendMessage(chatId, 'Команда доступна только администратору.');
+        return;
+      }
+
+      if (!text) {
+        await askAdminRegionName(chatId, userId, session.data);
+        return;
+      }
+
+      try {
+        if (session.data.adminCatalogRegionId) {
+          renameCatalogRegion(session.data.adminCatalogRegionId, text);
+          await showAdminCatalogMenu(chatId, userId, 'Регион переименован.');
+        } else {
+          addCatalogRegion(text);
+          await showAdminCatalogMenu(chatId, userId, 'Регион добавлен.');
+        }
+      } catch (error) {
+        logError('Не удалось сохранить регион:', error);
+        await sendMessage(chatId, 'Не удалось сохранить регион. Возможно, такое название уже используется.');
+        await askAdminRegionName(chatId, userId, session.data);
+      }
+      return;
+    }
+
+    case STATES.AWAIT_ADMIN_SHOP_DATA: {
+      if (!isAdmin(userId)) {
+        await sendMessage(chatId, 'Команда доступна только администратору.');
+        return;
+      }
+
+      const [name, ...addressParts] = String(text || '').split('|');
+      const address = addressParts.join('|').trim();
+      if (!name.trim() || !address) {
+        await sendMessage(chatId, 'Введите данные в формате: Название | Адрес');
+        await askAdminShopData(chatId, userId, session.data);
+        return;
+      }
+
+      try {
+        if (session.data.adminCatalogShopId) {
+          updateCatalogShop(session.data.adminCatalogShopId, name, address);
+          await showAdminCatalogMenu(chatId, userId, 'Магазин изменен.');
+        } else {
+          addCatalogShop(session.data.adminCatalogRegionId, name, address);
+          await showAdminCatalogMenu(chatId, userId, 'Магазин добавлен.');
+        }
+      } catch (error) {
+        logError('Не удалось сохранить магазин:', error);
+        await sendMessage(chatId, 'Не удалось сохранить магазин. Проверьте данные и уникальность названия.');
+        await askAdminShopData(chatId, userId, session.data);
+      }
+      return;
+    }
 
     case STATES.AWAIT_KSO_DATE: {
       if (!isValidDate(text)) {

@@ -1,7 +1,7 @@
 const { SHOP_BUTTONS_PER_ROW, SHOPS_PER_PAGE } = require('../constants');
 const { listRecentShops, saveSession } = require('../db');
 const { inlineKeyboard } = require('../keyboards');
-const { REGIONS, SHOPS, formatShop, getShopsByRegion } = require('../shops');
+const { formatShop, getCatalogShop, getRegions, getShopsByRegion } = require('../shops');
 const { STATES } = require('../states');
 const { removeStoredKeyboard, sendKeyboardMessage } = require('./keyboardSession');
 
@@ -15,8 +15,8 @@ async function showRegionPage(chatId, userId, data = {}) {
     buttons.push([{ text: 'Выбрать другой магазин', type: 'callback', payload: 'choose_other_shop' }]);
   }
 
-  buttons.push(...REGIONS.map((region, index) => ([
-    { text: region, type: 'callback', payload: `region_${index}` }
+  buttons.push(...getRegions().map((region) => ([
+    { text: region.name, type: 'callback', payload: `region_${region.id}` }
   ])));
 
   if (!data.adminEditUserId) {
@@ -40,7 +40,7 @@ async function showRegionPage(chatId, userId, data = {}) {
 
 async function showShopSearchResults(chatId, userId, matches, query, data = {}) {
   const buttons = matches.map((match) => ([
-    { text: formatShop(match.shop), type: 'callback', payload: `shop_${match.index}` }
+    { text: formatShop(match.shop), type: 'callback', payload: `shop_${match.shopId}` }
   ]));
   buttons.push([{ text: '← Назад к регионам', type: 'callback', payload: 'form_back' }]);
 
@@ -48,7 +48,7 @@ async function showShopSearchResults(chatId, userId, matches, query, data = {}) 
   saveSession(userId, STATES.AWAIT_SHOP_PAGE, {
     ...data,
     searchQuery: query,
-    searchResults: matches.map((match) => match.index)
+    searchResults: matches.map((match) => match.shopId)
   });
   await sendKeyboardMessage(
     chatId,
@@ -59,9 +59,11 @@ async function showShopSearchResults(chatId, userId, matches, query, data = {}) 
 }
 
 async function showShopPage(chatId, userId, page, data = {}) {
-  const region = data.region || REGIONS[0];
-  const regionShops = getShopsByRegion(region);
-  const maxPage = Math.ceil(regionShops.length / SHOPS_PER_PAGE) - 1;
+  const regions = getRegions();
+  const regionId = data.regionId || regions.find((item) => item.name === data.region)?.id || regions[0]?.id;
+  const region = data.region || regions.find((item) => item.id === regionId)?.name || '';
+  const regionShops = getShopsByRegion(regionId);
+  const maxPage = Math.max(0, Math.ceil(regionShops.length / SHOPS_PER_PAGE) - 1);
   const safePage = Math.max(0, Math.min(page, maxPage));
   const start = safePage * SHOPS_PER_PAGE;
   const shops = regionShops.slice(start, start + SHOPS_PER_PAGE);
@@ -69,8 +71,7 @@ async function showShopPage(chatId, userId, page, data = {}) {
   const buttons = [];
   for (let index = 0; index < shops.length; index += SHOP_BUTTONS_PER_ROW) {
     const row = shops.slice(index, index + SHOP_BUTTONS_PER_ROW).map((shop) => {
-      const shopIndex = SHOPS.indexOf(shop);
-      return { text: formatShop(shop), type: 'callback', payload: `shop_${shopIndex}` };
+      return { text: formatShop(shop), type: 'callback', payload: `shop_${shop.id}` };
     });
     buttons.push(row);
   }
@@ -90,7 +91,7 @@ async function showShopPage(chatId, userId, page, data = {}) {
   await removeStoredKeyboard(userId);
 
   const state = data.adminEditUserId ? STATES.AWAIT_ADMIN_SHOP_PAGE : STATES.AWAIT_SHOP_PAGE;
-  saveSession(userId, state, { ...data, shopPage: safePage });
+  saveSession(userId, state, { ...data, regionId, region, shopPage: safePage });
   await sendKeyboardMessage(
     chatId,
     userId,
@@ -104,22 +105,17 @@ async function showAdminRegionPage(chatId, adminUserId, targetUserId) {
 }
 
 async function showAdminShopPage(chatId, adminUserId, targetUserId, region, page) {
-  await showShopPage(chatId, adminUserId, page, { adminEditUserId: String(targetUserId), region });
-}
-
-function getRegionByPayload(payload) {
-  const regionIndex = Number(payload.replace('region_', ''));
-  return REGIONS[regionIndex] || '';
+  const regionItem = getRegions().find((item) => item.name === region);
+  await showShopPage(chatId, adminUserId, page, { adminEditUserId: String(targetUserId), region, regionId: regionItem?.id });
 }
 
 function getShopByPayload(payload) {
-  const shopIndex = Number(payload.replace('shop_', ''));
-  const shop = SHOPS[shopIndex];
-  return shop ? { region: shop.region, shopText: formatShop(shop) } : null;
+  const shopId = Number(payload.replace('shop_', ''));
+  const shop = getCatalogShop(shopId);
+  return shop ? { region: shop.region, regionId: shop.region_id, shopText: formatShop(shop) } : null;
 }
 
 module.exports = {
-  getRegionByPayload,
   getShopByPayload,
   showAdminRegionPage,
   showAdminShopPage,

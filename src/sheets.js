@@ -26,6 +26,7 @@ const PHOTO_HEADERS = Array.from({ length: MAX_PHOTOS_PER_RECORD }, (_, index) =
   return [`Фото ${photoNumber}`, `Ссылка на фото ${photoNumber}`];
 }).flat();
 const HEADERS = [...BASE_HEADERS, ...PHOTO_HEADERS];
+HEADERS.push('ID фиксации', 'record_id');
 const REPORT_HEADERS = ['ФИО', 'Дата', 'Отчет'];
 const KSO_HEADERS = ['ФИО', 'Дата', 'Отписка КСО'];
 const TECH_REPORT_HEADERS = ['ФИО', 'Дата', 'Техническая неполадка'];
@@ -781,6 +782,77 @@ async function writeRowToNextFreeLine(sheets, sheetName, row) {
   );
 }
 
+async function findFixationRows(sheets, sheetName, fixationId) {
+  const escapedSheetName = escapeSheetName(sheetName);
+  const valuesResponse = await withTimeout(
+    sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: `'${escapedSheetName}'!${DATA_RANGE}`,
+      majorDimension: 'ROWS'
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `поиск фиксации ${fixationId} на листе ${sheetName}`
+  );
+
+  return (valuesResponse.data.values || []).reduce((rows, row, index) => {
+    if (index > 0 && row[HEADERS.length - 2] === fixationId) {
+      rows.push(index + 1);
+    }
+    return rows;
+  }, []);
+}
+
+async function updateRecordRow(sheets, sheetName, rowNumber, row) {
+  const escapedSheetName = escapeSheetName(sheetName);
+  await ensureSheetGridSize(sheets, sheetName, rowNumber, HEADERS.length);
+  await withTimeout(
+    sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID,
+      range: `'${escapedSheetName}'!A${rowNumber}:${HEADER_END_COLUMN}${rowNumber}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [row]
+      }
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `обновление строки ${rowNumber} на листе ${sheetName}`
+  );
+}
+
+async function deleteRecordRows(sheets, sheetName, rowNumbers) {
+  if (!rowNumbers.length) {
+    return;
+  }
+
+  const properties = await getSheetProperties(sheets, sheetName);
+  const requests = [...rowNumbers]
+    .sort((left, right) => right - left)
+    .map((rowNumber) => ({
+      deleteDimension: {
+        range: {
+          sheetId: properties.sheetId,
+          dimension: 'ROWS',
+          startIndex: rowNumber - 1,
+          endIndex: rowNumber
+        }
+      }
+    }));
+
+  await withTimeout(
+    sheets.spreadsheets.batchUpdate({
+      spreadsheetId: SHEET_ID,
+      requestBody: {
+        requests
+      }
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `удаление строк ${rowNumbers.join(', ')} на листе ${sheetName}`
+  );
+}
+
 async function writeTextReportToNextFreeLine(sheets, row) {
   const spreadsheetId = getReportsSheetId();
   const escapedSheetName = escapeSheetName(REPORTS_SHEET_NAME);
@@ -910,6 +982,56 @@ async function appendRow(shop, row) {
   }
 }
 
+async function replaceRowsOnSheet(sheets, sheetName, existingRows, rows) {
+  const commonLength = Math.min(existingRows.length, rows.length);
+
+  for (let index = 0; index < commonLength; index += 1) {
+    await updateRecordRow(sheets, sheetName, existingRows[index], rows[index]);
+  }
+
+  await deleteRecordRows(sheets, sheetName, existingRows.slice(commonLength));
+
+  for (let index = commonLength; index < rows.length; index += 1) {
+    await writeRowToNextFreeLine(sheets, sheetName, rows[index]);
+  }
+}
+
+async function replaceFixationRows(previousShop, nextShop, fixationId, rows) {
+  try {
+    if (!SHEET_ID) {
+      throw new Error('Не задана переменная окружения GOOGLE_SHEET_ID');
+    }
+
+    const sheets = getSheetsClient();
+    await ensureShopSheet(sheets, DATA_SHEET_NAME);
+    await ensureShopSheet(sheets, previousShop);
+    await ensureShopSheet(sheets, nextShop);
+
+    const dataRows = await findFixationRows(sheets, DATA_SHEET_NAME, fixationId);
+    const previousShopRows = await findFixationRows(sheets, previousShop, fixationId);
+
+    if (!dataRows.length || !previousShopRows.length) {
+      throw new Error(`Не удалось найти редактируемую фиксацию ${fixationId} в Google Sheets`);
+    }
+
+    await replaceRowsOnSheet(sheets, DATA_SHEET_NAME, dataRows, rows);
+
+    if (previousShop === nextShop) {
+      await replaceRowsOnSheet(sheets, previousShop, previousShopRows, rows);
+    } else {
+      await deleteRecordRows(sheets, previousShop, previousShopRows);
+      for (const row of rows) {
+        await writeRowToNextFreeLine(sheets, nextShop, row);
+      }
+    }
+
+    log('Google Sheets: строки фиксации успешно заменены.', { fixationId, previousShop, nextShop });
+  } catch (error) {
+    logError('Ошибка замены строки в Google Sheets:', error);
+    throw error;
+  }
+}
+
 async function appendTextReportRow(row) {
   try {
     log('Google Sheets: начинаем запись текстового отчета.', { sheet: REPORTS_SHEET_NAME });
@@ -949,4 +1071,4 @@ async function appendTechReportRow(row) {
   }
 }
 
-module.exports = { appendRow, appendTextReportRow, appendKsoReportRow, appendTechReportRow };
+module.exports = { appendRow, replaceFixationRows, appendTextReportRow, appendKsoReportRow, appendTechReportRow };

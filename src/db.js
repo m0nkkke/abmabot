@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const Database = require('better-sqlite3');
 const { ROLES } = require('./constants');
+const seedShops = require('./shops.json');
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 const DB_PATH = path.join(DATA_DIR, 'bot.sqlite');
@@ -56,6 +57,32 @@ db.exec(`
     shop TEXT NOT NULL,
     selected_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (user_id, region, shop)
+  );
+
+  CREATE TABLE IF NOT EXISTS recent_fixations (
+    fixation_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    data TEXT NOT NULL,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS catalog_regions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE
+  );
+
+  CREATE TABLE IF NOT EXISTS catalog_shops (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    region_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    address TEXT NOT NULL DEFAULT '',
+    UNIQUE(region_id, name),
+    FOREIGN KEY(region_id) REFERENCES catalog_regions(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS catalog_migrations (
+    name TEXT PRIMARY KEY,
+    applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 `);
 
@@ -175,6 +202,111 @@ const deleteOldRecentShopsStmt = db.prepare(`
       LIMIT ?
     )
 `);
+const upsertRecentFixationStmt = db.prepare(`
+  INSERT INTO recent_fixations (fixation_id, user_id, data, updated_at)
+  VALUES (@fixationId, @userId, @data, CURRENT_TIMESTAMP)
+  ON CONFLICT(fixation_id) DO UPDATE SET
+    user_id = excluded.user_id,
+    data = excluded.data,
+    updated_at = CURRENT_TIMESTAMP
+`);
+const listRecentFixationsStmt = db.prepare(`
+  SELECT fixation_id, data, updated_at
+  FROM recent_fixations
+  WHERE user_id = ?
+  ORDER BY updated_at DESC
+  LIMIT ?
+`);
+const listCatalogRegionsStmt = db.prepare('SELECT id, name FROM catalog_regions ORDER BY name COLLATE NOCASE');
+const getCatalogRegionStmt = db.prepare('SELECT id, name FROM catalog_regions WHERE id = ?');
+const insertCatalogRegionStmt = db.prepare('INSERT INTO catalog_regions (name) VALUES (?)');
+const updateCatalogRegionStmt = db.prepare('UPDATE catalog_regions SET name = ? WHERE id = ?');
+const deleteCatalogRegionStmt = db.prepare('DELETE FROM catalog_regions WHERE id = ?');
+const countCatalogRegionShopsStmt = db.prepare('SELECT COUNT(*) AS count FROM catalog_shops WHERE region_id = ?');
+const listCatalogShopsStmt = db.prepare(`
+  SELECT shops.id, shops.name, shops.address, regions.id AS region_id, regions.name AS region
+  FROM catalog_shops shops
+  JOIN catalog_regions regions ON regions.id = shops.region_id
+  ORDER BY regions.name COLLATE NOCASE, shops.name COLLATE NOCASE
+`);
+const listCatalogShopsByRegionStmt = db.prepare(`
+  SELECT shops.id, shops.name, shops.address, regions.id AS region_id, regions.name AS region
+  FROM catalog_shops shops
+  JOIN catalog_regions regions ON regions.id = shops.region_id
+  WHERE shops.region_id = ?
+  ORDER BY shops.name COLLATE NOCASE
+`);
+const getCatalogShopStmt = db.prepare(`
+  SELECT shops.id, shops.name, shops.address, regions.id AS region_id, regions.name AS region
+  FROM catalog_shops shops
+  JOIN catalog_regions regions ON regions.id = shops.region_id
+  WHERE shops.id = ?
+`);
+const insertCatalogShopStmt = db.prepare('INSERT INTO catalog_shops (region_id, name, address) VALUES (?, ?, ?)');
+const insertCatalogShopIfMissingStmt = db.prepare('INSERT OR IGNORE INTO catalog_shops (region_id, name, address) VALUES (?, ?, ?)');
+const updateCatalogShopStmt = db.prepare('UPDATE catalog_shops SET name = ?, address = ? WHERE id = ?');
+const deleteCatalogShopStmt = db.prepare('DELETE FROM catalog_shops WHERE id = ?');
+const hasCatalogMigrationStmt = db.prepare('SELECT 1 FROM catalog_migrations WHERE name = ?');
+const insertCatalogMigrationStmt = db.prepare('INSERT INTO catalog_migrations (name) VALUES (?)');
+const updateRecentShopRegionStmt = db.prepare('UPDATE recent_shops SET region = ? WHERE region = ?');
+const updateRecentShopNameStmt = db.prepare('UPDATE recent_shops SET shop = ? WHERE region = ? AND shop = ?');
+const deleteRecentShopRefsStmt = db.prepare('DELETE FROM recent_shops WHERE region = ? AND shop = ?');
+const deleteRecentShopRegionRefsStmt = db.prepare('DELETE FROM recent_shops WHERE region = ?');
+
+const initializeCatalog = db.transaction(() => {
+  const existingRegions = listCatalogRegionsStmt.all();
+  if (existingRegions.length) {
+    return;
+  }
+
+  const regionIds = new Map();
+  for (const shop of seedShops) {
+    const regionName = shop.region || 'Республика Бурятия';
+    let regionId = regionIds.get(regionName);
+    if (!regionId) {
+      regionId = insertCatalogRegionStmt.run(regionName).lastInsertRowid;
+      regionIds.set(regionName, regionId);
+    }
+    insertCatalogShopStmt.run(regionId, shop.name, shop.address || '');
+  }
+});
+
+initializeCatalog();
+
+const applyCatalogMigrations = db.transaction(() => {
+  const migrationName = '2026-06-add-buryatia-secondary-shops';
+  if (hasCatalogMigrationStmt.get(migrationName)) {
+    return;
+  }
+
+  let region = listCatalogRegionsStmt.all().find((item) => item.name === 'Республика Бурятия');
+  if (!region) {
+    const regionId = insertCatalogRegionStmt.run('Республика Бурятия').lastInsertRowid;
+    region = { id: regionId };
+  }
+
+  const shopNames = [
+    'АП-1',
+    'МАГ-1',
+    'МАГ-2',
+    'МАГ-5',
+    'МАГ-7',
+    'МАГ-8',
+    'МАГ-9',
+    'МАГ-10',
+    'МАГ-11',
+    'МАГ-12',
+    'Ф1',
+    'Ф4'
+  ];
+  for (const shopName of shopNames) {
+    insertCatalogShopIfMissingStmt.run(region.id, shopName, '');
+  }
+
+  insertCatalogMigrationStmt.run(migrationName);
+});
+
+applyCatalogMigrations();
 
 function getProfile(userId) {
   return getProfileStmt.get(String(userId));
@@ -332,6 +464,121 @@ function listRecentShops(userId, limit = 5) {
   return listRecentShopsStmt.all(String(userId), limit);
 }
 
+function saveRecentFixation(userId, fixationId, data) {
+  upsertRecentFixationStmt.run({
+    userId: String(userId),
+    fixationId: String(fixationId),
+    data: JSON.stringify(data)
+  });
+}
+
+function listRecentFixations(userId, limit = 5) {
+  return listRecentFixationsStmt.all(String(userId), limit).map((row) => {
+    let data = {};
+    try {
+      data = JSON.parse(row.data || '{}');
+    } catch (error) {
+      console.error(`[${new Date().toISOString()}] Ошибка разбора JSON недавней фиксации:`, error);
+    }
+
+    return {
+      fixationId: row.fixation_id,
+      updatedAt: row.updated_at,
+      data
+    };
+  });
+}
+
+function listCatalogRegions() {
+  return listCatalogRegionsStmt.all();
+}
+
+function getCatalogRegion(regionId) {
+  return getCatalogRegionStmt.get(Number(regionId)) || null;
+}
+
+function addCatalogRegion(name) {
+  return Number(insertCatalogRegionStmt.run(String(name).trim()).lastInsertRowid);
+}
+
+function renameCatalogRegion(regionId, name) {
+  const region = getCatalogRegion(regionId);
+  const nextName = String(name).trim();
+  if (!region) {
+    return false;
+  }
+
+  const rename = db.transaction(() => {
+    updateCatalogRegionStmt.run(nextName, Number(regionId));
+    updateRecentShopRegionStmt.run(nextName, region.name);
+  });
+  rename();
+  return true;
+}
+
+function deleteCatalogRegion(regionId) {
+  const id = Number(regionId);
+  const region = getCatalogRegion(id);
+  if (!region) {
+    return false;
+  }
+  if (countCatalogRegionShopsStmt.get(id).count > 0) {
+    return false;
+  }
+
+  const remove = db.transaction(() => {
+    deleteCatalogRegionStmt.run(id);
+    deleteRecentShopRegionRefsStmt.run(region.name);
+  });
+  remove();
+  return true;
+}
+
+function listCatalogShops() {
+  return listCatalogShopsStmt.all();
+}
+
+function listCatalogShopsByRegion(regionId) {
+  return listCatalogShopsByRegionStmt.all(Number(regionId));
+}
+
+function getCatalogShop(shopId) {
+  return getCatalogShopStmt.get(Number(shopId)) || null;
+}
+
+function addCatalogShop(regionId, name, address = '') {
+  return Number(insertCatalogShopStmt.run(Number(regionId), String(name).trim(), String(address).trim()).lastInsertRowid);
+}
+
+function updateCatalogShop(shopId, name, address = '') {
+  const shop = getCatalogShop(shopId);
+  const nextName = String(name).trim();
+  if (!shop) {
+    return false;
+  }
+
+  const update = db.transaction(() => {
+    updateCatalogShopStmt.run(nextName, String(address).trim(), Number(shopId));
+    updateRecentShopNameStmt.run(nextName, shop.region, shop.name);
+  });
+  update();
+  return true;
+}
+
+function deleteCatalogShop(shopId) {
+  const shop = getCatalogShop(shopId);
+  if (!shop) {
+    return false;
+  }
+
+  const remove = db.transaction(() => {
+    deleteCatalogShopStmt.run(Number(shopId));
+    deleteRecentShopRefsStmt.run(shop.region, shop.name);
+  });
+  remove();
+  return true;
+}
+
 function closeDb() {
   db.close();
 }
@@ -361,5 +608,18 @@ module.exports = {
   listPendingAccessRequests,
   rememberRecentShop,
   listRecentShops,
+  saveRecentFixation,
+  listRecentFixations,
+  listCatalogRegions,
+  getCatalogRegion,
+  addCatalogRegion,
+  renameCatalogRegion,
+  deleteCatalogRegion,
+  listCatalogShops,
+  listCatalogShopsByRegion,
+  getCatalogShop,
+  addCatalogShop,
+  updateCatalogShop,
+  deleteCatalogShop,
   closeDb
 };

@@ -98,14 +98,17 @@ async function askMissedReason(chatId, userId, data = {}) {
 
 async function askCheckAction(chatId, userId, data = {}) {
     saveSession(userId, STATES.AWAIT_CHECK_ACTION, data);
+    const addEventRows = [
+        [{ text: '+ Кража', type: 'callback', payload: 'check_add_theft' }],
+        [{ text: '+ Упущенная кража', type: 'callback', payload: 'check_add_missed_theft' }],
+        [{ text: '+ Нарушение', type: 'callback', payload: 'check_add_violation' }]
+      ];
     await sendCleanupMessage(
       chatId,
       userId,
       `${formatEventRows(data).join('\n')}\n\nДобавить еще событие в этот чек?`,
       inlineKeyboard([
-        [{ text: '+ Кража', type: 'callback', payload: 'check_add_theft' }],
-        [{ text: '+ Упущенная кража', type: 'callback', payload: 'check_add_missed_theft' }],
-        [{ text: '+ Нарушение', type: 'callback', payload: 'check_add_violation' }],
+        ...addEventRows,
         [{ text: 'Перейти к фото', type: 'callback', payload: 'check_finish' }],
         backButtonRow()
       ])

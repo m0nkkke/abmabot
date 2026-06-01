@@ -39,6 +39,7 @@ const BOT_COMMANDS = [
   { name: 'sheet', description: 'Ссылка на Google Таблицу' },
   { name: 'employees', description: 'Список сотрудников' },
   { name: 'message', description: 'Админ: рассылка сообщения пользователям' },
+  { name: 'admin', description: 'Админ: управление регионами и магазинами' },
   { name: 'setfio', description: 'Админ: изменить ФИО сотрудника' },
   { name: 'block', description: 'Админ: отключить доступ сотруднику' }
 ];
