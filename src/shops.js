@@ -6,6 +6,10 @@ const {
 } = require('./db');
 
 const DEFAULT_REGION = 'Республика Бурятия';
+const shopNameCollator = new Intl.Collator('ru', {
+  numeric: true,
+  sensitivity: 'base'
+});
 
 function formatShop(shop) {
   return shop.name;
@@ -102,7 +106,7 @@ function searchShops(query, limit = 9) {
     return { shop, shopId: shop.id, score };
   })
     .filter((item) => item.score > 0)
-    .sort((left, right) => right.score - left.score || left.shop.name.localeCompare(right.shop.name, 'ru'));
+    .sort((left, right) => right.score - left.score || shopNameCollator.compare(left.shop.name, right.shop.name));
 
   return scored.slice(0, limit);
 }

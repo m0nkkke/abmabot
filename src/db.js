@@ -10,6 +10,10 @@ const DB_PATH = path.join(DATA_DIR, 'bot.sqlite');
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
 const db = new Database(DB_PATH);
+const shopNameCollator = new Intl.Collator('ru', {
+  numeric: true,
+  sensitivity: 'base'
+});
 
 db.pragma('journal_mode = WAL');
 
@@ -535,11 +539,13 @@ function deleteCatalogRegion(regionId) {
 }
 
 function listCatalogShops() {
-  return listCatalogShopsStmt.all();
+  return listCatalogShopsStmt.all().sort((left, right) => shopNameCollator.compare(left.name, right.name));
 }
 
 function listCatalogShopsByRegion(regionId) {
-  return listCatalogShopsByRegionStmt.all(Number(regionId));
+  return listCatalogShopsByRegionStmt
+    .all(Number(regionId))
+    .sort((left, right) => shopNameCollator.compare(left.name, right.name));
 }
 
 function getCatalogShop(shopId) {
