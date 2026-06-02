@@ -119,6 +119,7 @@ function formatEventRows(data) {
     const events = Array.isArray(data.events) && data.events.length
       ? data.events
       : [{
+        item: data.item,
         eventType: data.eventType,
         violationType: data.violationType,
         amount: data.amount,
@@ -134,7 +135,8 @@ function formatEventRows(data) {
       ...events.map((event, index) => {
         const eventLabel = event.violationType ? `${event.eventType}: ${event.violationType}` : event.eventType;
         const reason = event.missedReason ? `, причина: ${event.missedReason}` : '';
-        return `${index + 1}. ${eventLabel}, сумма: ${event.amount} руб.${reason}`;
+        const item = event.item || data.item || 'Не указан';
+        return `${index + 1}. ${item}: ${eventLabel}, сумма: ${event.amount} руб.${reason}`;
       })
     ];
 }
@@ -147,7 +149,6 @@ function buildSummary(profile, data) {
         `Регион: ${data.region || 'Не указан'}`,
         `Магазин: ${data.shop || 'Не указан'}`,
         `Дата: ${data.date}`,
-        `Наименование товара: ${data.item}`,
         `Фото: ${Array.isArray(data.photos) ? data.photos.length : 0}`,
         '',
         ...formatEventRows(data)

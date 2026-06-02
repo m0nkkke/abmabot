@@ -173,6 +173,7 @@ function getEvents(data) {
   }
 
   return [{
+    item: data.item,
     eventType: data.eventType,
     violationType: data.violationType,
     amount: data.amount,
@@ -182,6 +183,7 @@ function getEvents(data) {
 
 function appendCurrentEvent(data) {
   const event = {
+    item: data.item,
     eventType: data.eventType,
     violationType: data.violationType,
     amount: data.amount,
@@ -192,10 +194,12 @@ function appendCurrentEvent(data) {
     events: [...(Array.isArray(data.events) ? data.events : []), event]
   };
 
+  delete nextData.item;
   delete nextData.eventType;
   delete nextData.violationType;
   delete nextData.amount;
   delete nextData.missedReason;
+  delete nextData.isAdditionalEvent;
 
   return nextData;
 }
@@ -211,6 +215,7 @@ function popLastEvent(data) {
   const nextData = {
     ...data,
     events,
+    item: lastEvent.item || data.item,
     eventType: lastEvent.eventType,
     violationType: lastEvent.violationType
   };
@@ -227,7 +232,7 @@ function buildSheetRow(profile, data, event, fixationId, recordId) {
     data.region || '',
     data.shop || '',
     data.date,
-    data.item,
+    event.item || data.item || '',
     formatEventTypeForSheet(event),
     event.eventType === EVENT_TYPES.THEFT ? event.amount : '',
     event.eventType === EVENT_TYPES.MISSED_THEFT ? event.amount : '',
@@ -264,7 +269,8 @@ function buildEventSummaryRows(data) {
     ...events.map((event, index) => {
       const eventLabel = event.violationType ? `${event.eventType}: ${event.violationType}` : event.eventType;
       const reason = event.missedReason ? `, причина: ${event.missedReason}` : '';
-      return `${index + 1}. ${eventLabel}, сумма: ${event.amount} руб.${reason}`;
+      const item = event.item || data.item || 'Не указан';
+      return `${index + 1}. ${item}: ${eventLabel}, сумма: ${event.amount} руб.${reason}`;
     })
   ];
 }
@@ -277,7 +283,6 @@ function buildSavedSummary(profile, data) {
     `Регион: ${data.region || 'Не указан'}`,
     `Магазин: ${data.shop || 'Не указан'}`,
     `Дата: ${data.date}`,
-    `Наименование товара: ${data.item}`,
     `Фото: ${getPhotos(data).length}`,
     '',
     ...buildEventSummaryRows(data)
@@ -377,6 +382,7 @@ function buildRecentFixationData(data, events) {
     date: data.date || '',
     item: data.item || '',
     events: events.map((event) => ({
+      item: event.item || data.item || '',
       eventType: event.eventType,
       violationType: event.violationType || '',
       amount: event.amount,
@@ -618,14 +624,28 @@ async function handleFormBack(chatId, userId, session) {
       return;
 
     case STATES.AWAIT_ITEM:
+      if (session.data.isAdditionalEvent) {
+        await askCheckAction(
+          chatId,
+          userId,
+          omitFormFields(session.data, ['item', 'eventType', 'violationType', 'amount', 'missedReason', 'isAdditionalEvent'])
+        );
+        return;
+      }
+
       await askDate(chatId, userId, omitFormFields(session.data, ['date', 'item']));
       return;
 
     case STATES.AWAIT_EVENT_TYPE:
-      await askItem(chatId, userId, omitFormFields(session.data, ['item', 'eventType', 'violationType', 'amount', 'events']));
+      await askItem(chatId, userId, omitFormFields(session.data, ['item', 'eventType', 'violationType', 'amount']));
       return;
 
     case STATES.AWAIT_VIOLATION_TYPE:
+      if (session.data.isAdditionalEvent) {
+        await askItem(chatId, userId, omitFormFields(session.data, ['item', 'violationType', 'amount']));
+        return;
+      }
+
       if (Array.isArray(session.data.events) && session.data.events.length) {
         await askCheckAction(chatId, userId, omitFormFields(session.data, ['eventType', 'violationType', 'amount']));
         return;
@@ -640,8 +660,8 @@ async function handleFormBack(chatId, userId, session) {
         return;
       }
 
-      if (Array.isArray(session.data.events) && session.data.events.length) {
-        await askCheckAction(chatId, userId, omitFormFields(session.data, ['eventType', 'violationType', 'amount', 'missedReason']));
+      if (session.data.isAdditionalEvent) {
+        await askItem(chatId, userId, omitFormFields(session.data, ['item', 'amount', 'missedReason']));
         return;
       }
 
@@ -663,7 +683,7 @@ async function handleFormBack(chatId, userId, session) {
     case STATES.AWAIT_CHECK_ACTION: {
       const data = popLastEvent(session.data);
       if (!data) {
-        await askEventType(chatId, userId, omitFormFields(session.data, ['eventType', 'violationType', 'amount', 'missedReason']));
+        await askEventType(chatId, userId, omitFormFields(session.data, ['item', 'eventType', 'violationType', 'amount', 'missedReason']));
         return;
       }
 
@@ -1225,10 +1245,11 @@ async function handleCallback(update, chatId, userId, session) {
     await deleteCallbackMessage(update);
     let data = {
       ...session.data,
-      eventType: EVENT_TYPES.THEFT
+      eventType: EVENT_TYPES.THEFT,
+      isAdditionalEvent: true
     };
     data = await sendFormMessage(chatId, data, `Тип фиксации: ${EVENT_TYPES.THEFT}`);
-    await askAmount(chatId, userId, data);
+    await askItem(chatId, userId, data);
     return;
   }
 
@@ -1241,10 +1262,11 @@ async function handleCallback(update, chatId, userId, session) {
     await deleteCallbackMessage(update);
     let data = {
       ...session.data,
-      eventType: EVENT_TYPES.MISSED_THEFT
+      eventType: EVENT_TYPES.MISSED_THEFT,
+      isAdditionalEvent: true
     };
     data = await sendFormMessage(chatId, data, `Тип фиксации: ${EVENT_TYPES.MISSED_THEFT}`);
-    await askAmount(chatId, userId, data);
+    await askItem(chatId, userId, data);
     return;
   }
 
@@ -1257,10 +1279,11 @@ async function handleCallback(update, chatId, userId, session) {
     await deleteCallbackMessage(update);
     let data = {
       ...session.data,
-      eventType: EVENT_TYPES.VIOLATION
+      eventType: EVENT_TYPES.VIOLATION,
+      isAdditionalEvent: true
     };
     data = await sendFormMessage(chatId, data, `Тип фиксации: ${EVENT_TYPES.VIOLATION}`);
-    await askViolationType(chatId, userId, data);
+    await askItem(chatId, userId, data);
     return;
   }
 
@@ -1824,6 +1847,16 @@ async function handleText(update, chatId, userId, session) {
       await cleanupMessages(userId);
       let data = { ...session.data, item: text };
       data = await sendFormMessage(chatId, data, `Наименование товара: ${text}`);
+      if (data.eventType === EVENT_TYPES.VIOLATION) {
+        await askViolationType(chatId, userId, data);
+        return;
+      }
+
+      if (data.eventType) {
+        await askAmount(chatId, userId, data);
+        return;
+      }
+
       await askEventType(chatId, userId, data);
       return;
     }
