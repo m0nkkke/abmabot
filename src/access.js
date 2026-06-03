@@ -8,6 +8,14 @@ const {
   saveEmployee,
   updateEmployeeFio
 } = require('./db');
+const {
+  applyManualAssignment,
+  initKsoAssignmentSheet,
+  parseAssignmentCommandDate,
+  runKsoAssignment,
+  showKsoAnalytics,
+  showWorkingEmployees
+} = require('./ksoAssignment');
 const { sendMessage } = require('./maxClient');
 
 const ADMIN_USER_IDS = (process.env.ADMIN_USER_IDS || '')
@@ -90,6 +98,65 @@ async function handleAdminCommand(chatId, userId, text, googleSheetUrl) {
 
   if (command === '/employees') {
     await sendMessage(chatId, formatEmployees(listEmployees()));
+    return true;
+  }
+
+  if (command === '/distribution') {
+    const isoDate = parseAssignmentCommandDate(args);
+    if (!isoDate) {
+      await sendMessage(chatId, 'Укажите дату в формате ДД.ММ или ДД.ММ.ГГГГ: /distribution 15.06');
+      return true;
+    }
+
+    await sendMessage(chatId, await runKsoAssignment(isoDate));
+    return true;
+  }
+
+  if (command === '/initkso') {
+    await sendMessage(chatId, await initKsoAssignmentSheet());
+    return true;
+  }
+
+  if (command === '/kso_analytics') {
+    await sendMessage(chatId, await showKsoAnalytics());
+    return true;
+  }
+
+  if (command === '/who_works') {
+    const isoDate = parseAssignmentCommandDate(args);
+    if (!isoDate) {
+      await sendMessage(chatId, 'Укажите дату в формате ДД.ММ или ДД.ММ.ГГГГ: /who_works 15.06');
+      return true;
+    }
+
+    await sendMessage(chatId, await showWorkingEmployees(isoDate));
+    return true;
+  }
+
+  if (command === '/manual') {
+    if (args.length < 2) {
+      await sendMessage(chatId, 'Укажите ФИО и магазин: /manual Иванов К2');
+      return true;
+    }
+
+    const shop = args[args.length - 1];
+    const fio = args.slice(0, -1).join(' ');
+    await sendMessage(chatId, await applyManualAssignment(fio, shop));
+    return true;
+  }
+
+  if (command === '/kso_help') {
+    await sendMessage(chatId, [
+      'Команды КСО:',
+      '',
+      'работаю ДД.ММ — отметить рабочий день',
+      'выходной ДД.ММ — отметить выходной',
+      '/distribution [ДД.ММ] — сформировать текст распределения',
+      '/initkso — создать листы и заполнить сотрудников/магазины',
+      '/kso_analytics — показать сводку',
+      '/who_works [ДД.ММ] — список работающих',
+      '/manual [ФИО] [магазин] — зафиксировать ручное назначение'
+    ].join('\n'));
     return true;
   }
 

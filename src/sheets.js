@@ -4,6 +4,7 @@ const { MAX_PHOTOS_PER_RECORD } = require('./constants');
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const REPORTS_SHEET_ID = process.env.GOOGLE_REPORTS_SHEET_ID || process.env.GOOGLE_REPORT_SHEET_ID || '';
 const TECH_REPORTS_SHEET_ID = process.env.GOOGLE_TECH_REPORTS_SHEET_ID || '';
+const KSO_ASSIGNMENT_SHEET_ID = process.env.GOOGLE_KSO_ASSIGNMENT_SHEET_ID || SHEET_ID;
 const CREDENTIALS_PATH = process.env.GOOGLE_CREDENTIALS_PATH || './credentials/service-account.json';
 const DATA_SHEET_NAME = 'Данные';
 const REPORTS_SHEET_NAME = process.env.GOOGLE_REPORTS_SHEET_NAME || 'Отчеты';
@@ -1071,4 +1072,603 @@ async function appendTechReportRow(row) {
   }
 }
 
-module.exports = { appendRow, replaceFixationRows, appendTextReportRow, appendKsoReportRow, appendTechReportRow };
+const KSO_EMPLOYEES_SHEET_NAME = 'Сотрудники';
+const KSO_SCHEDULE_SHEET_NAME = 'График';
+const KSO_SHOPS_SHEET_NAME = 'Магазины';
+const KSO_ANALYTICS_SHEET_NAME = 'Аналитика';
+const KSO_DAILY_SHEET_NAME = 'Ежедневное распределение';
+const KSO_EMPLOYEE_HEADERS = ['№', 'ФИО', 'Имя', 'Уровень', 'Коэффициент', 'Гиперов за месяц', 'Статус', 'Приоритет', 'Ограничения'];
+const KSO_SCHEDULE_HEADERS = ['№', 'ФИО', 'Имя', ...Array.from({ length: 31 }, (_, index) => String(index + 1))];
+const KSO_SHOP_HEADERS = ['Магазин', 'Категория', 'Приоритет', 'Нужно сотрудников', 'Поток'];
+const KSO_HISTORY_HEADERS_PREFIX = ['№', 'ФИО'];
+const KSO_DAILY_HEADERS = [
+  'Сотрудник',
+  'Уровень',
+  'Гиперов за месяц',
+  'Последний гипер',
+  'Дней подряд',
+  'Рекомендуемая категория',
+  'Назначение'
+];
+const KSO_ANALYTICS_HEADERS = ['Сотрудник', 'Гиперов', 'Средних', 'Маленьких', 'Баллы', 'Последний гипер'];
+
+function formatKsoDateHeader(isoDate) {
+  const [year, month, day] = isoDate.split('-');
+  return `${day}.${month}.${year}`;
+}
+
+function getKsoHistoryHeaders(isoDate) {
+  const year = Number(isoDate.slice(0, 4));
+  const month = Number(isoDate.slice(5, 7));
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const dayHeaders = Array.from({ length: lastDay }, (_, index) => {
+    const day = String(index + 1).padStart(2, '0');
+    return `${day}.${String(month).padStart(2, '0')}.${year}`;
+  });
+
+  return [...KSO_HISTORY_HEADERS_PREFIX, ...dayHeaders, 'Гиперов'];
+}
+
+async function getSpreadsheetSheetNames(sheets, spreadsheetId = SHEET_ID) {
+  const spreadsheet = await withTimeout(
+    sheets.spreadsheets.get({
+      spreadsheetId,
+      fields: 'sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))'
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'получение списка листов для КСО'
+  );
+
+  return spreadsheet.data.sheets.map((sheet) => sheet.properties);
+}
+
+async function ensureKsoSheetExists(sheets, spreadsheetId, sheetName, headers = null, minRows = 100, minColumns = 20) {
+  const properties = await getSpreadsheetSheetNames(sheets, spreadsheetId);
+  const existing = properties.find((item) => item.title === sheetName);
+
+  if (!existing) {
+    await withTimeout(
+      sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [
+            {
+              addSheet: {
+                properties: {
+                  title: sheetName,
+                  gridProperties: {
+                    rowCount: Math.max(minRows, MIN_EXTRA_ROWS),
+                    columnCount: Math.max(minColumns, MIN_EXTRA_COLUMNS)
+                  }
+                }
+              }
+            }
+          ]
+        }
+      }, {
+        timeout: GOOGLE_REQUEST_TIMEOUT_MS
+      }),
+      `создание листа ${sheetName}`
+    );
+  } else if ((existing.gridProperties?.rowCount || 0) < minRows || (existing.gridProperties?.columnCount || 0) < minColumns) {
+    await withTimeout(
+      sheets.spreadsheets.batchUpdate({
+        spreadsheetId,
+        requestBody: {
+          requests: [
+            {
+              updateSheetProperties: {
+                properties: {
+                  sheetId: existing.sheetId,
+                  gridProperties: {
+                    rowCount: Math.max(existing.gridProperties?.rowCount || 0, minRows + MIN_EXTRA_ROWS),
+                    columnCount: Math.max(existing.gridProperties?.columnCount || 0, minColumns + MIN_EXTRA_COLUMNS)
+                  }
+                },
+                fields: 'gridProperties.rowCount,gridProperties.columnCount'
+              }
+            }
+          ]
+        }
+      }, {
+        timeout: GOOGLE_REQUEST_TIMEOUT_MS
+      }),
+      `расширение листа ${sheetName}`
+    );
+  }
+
+  if (headers) {
+    await withTimeout(
+      sheets.spreadsheets.values.update({
+        spreadsheetId,
+        range: `'${escapeSheetName(sheetName)}'!A1:${columnNameByIndex(headers.length)}1`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: {
+          values: [headers]
+        }
+      }, {
+        timeout: GOOGLE_REQUEST_TIMEOUT_MS
+      }),
+      `обновление заголовков листа ${sheetName}`
+    );
+  }
+}
+
+async function ensureKsoAssignmentSheets(sheets, isoDate, historySheetName) {
+  await ensureKsoSheetExists(sheets, KSO_ASSIGNMENT_SHEET_ID, KSO_EMPLOYEES_SHEET_NAME, KSO_EMPLOYEE_HEADERS, 100, KSO_EMPLOYEE_HEADERS.length);
+  await ensureKsoSheetExists(sheets, KSO_ASSIGNMENT_SHEET_ID, KSO_SCHEDULE_SHEET_NAME, KSO_SCHEDULE_HEADERS, 100, KSO_SCHEDULE_HEADERS.length);
+  await ensureKsoSheetExists(sheets, KSO_ASSIGNMENT_SHEET_ID, KSO_SHOPS_SHEET_NAME, KSO_SHOP_HEADERS, 100, KSO_SHOP_HEADERS.length);
+  await ensureKsoSheetExists(sheets, KSO_ASSIGNMENT_SHEET_ID, KSO_ANALYTICS_SHEET_NAME, KSO_ANALYTICS_HEADERS, 100, KSO_ANALYTICS_HEADERS.length);
+  await ensureKsoSheetExists(sheets, KSO_ASSIGNMENT_SHEET_ID, KSO_DAILY_SHEET_NAME, KSO_DAILY_HEADERS, 100, KSO_DAILY_HEADERS.length);
+  await ensureKsoSheetExists(sheets, KSO_ASSIGNMENT_SHEET_ID, historySheetName, getKsoHistoryHeaders(isoDate), 100, getKsoHistoryHeaders(isoDate).length);
+}
+
+async function getKsoAssignmentSheetData(isoDate, historySheetName) {
+  if (!KSO_ASSIGNMENT_SHEET_ID) {
+    throw new Error('Не задана переменная окружения GOOGLE_KSO_ASSIGNMENT_SHEET_ID');
+  }
+
+  const sheets = getSheetsClient();
+  await ensureKsoAssignmentSheets(sheets, isoDate, historySheetName);
+
+  const ranges = [
+    `'${escapeSheetName(KSO_EMPLOYEES_SHEET_NAME)}'!A:Z`,
+    `'${escapeSheetName(KSO_SCHEDULE_SHEET_NAME)}'!A:AH`,
+    `'${escapeSheetName(KSO_SHOPS_SHEET_NAME)}'!A:F`,
+    `'${escapeSheetName(historySheetName)}'!A:AJ`,
+    `'${escapeSheetName(KSO_ANALYTICS_SHEET_NAME)}'!A:F`
+  ];
+
+  const response = await withTimeout(
+    sheets.spreadsheets.values.batchGet({
+      spreadsheetId: KSO_ASSIGNMENT_SHEET_ID,
+      ranges,
+      majorDimension: 'ROWS',
+      valueRenderOption: 'UNFORMATTED_VALUE',
+      dateTimeRenderOption: 'FORMATTED_STRING'
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'batchGet данных распределения КСО'
+  );
+
+  const valueRanges = response.data.valueRanges || [];
+
+  return {
+    employees: valueRanges[0]?.values || [],
+    schedule: valueRanges[1]?.values || [],
+    shops: valueRanges[2]?.values || [],
+    history: valueRanges[3]?.values || [],
+    analytics: valueRanges[4]?.values || [],
+    historySheetName
+  };
+}
+
+function normalizeKsoText(value) {
+  return String(value || '').trim().toLowerCase().replace(/ё/g, 'е');
+}
+
+function normalizeKsoFio(value) {
+  return normalizeKsoText(value).replace(/\s+/g, ' ');
+}
+
+function ksoEmployeeKey(employee) {
+  return String(employee.id || '').trim() || normalizeKsoFio(employee.fio);
+}
+
+function getKsoDateColumnIndex(isoDate) {
+  return Number(isoDate.slice(8, 10)) + 1;
+}
+
+function getKsoHistoryTotalColumnIndex(isoDate) {
+  return getKsoHistoryHeaders(isoDate).length - 1;
+}
+
+function getKsoAssignmentEmployees(result, category = null) {
+  const rows = [];
+  result.assignments.forEach((assignment) => {
+    if (!category || assignment.category === category) {
+      assignment.employees.forEach((employee) => rows.push({ employee, assignment }));
+    }
+  });
+  return rows;
+}
+
+function getKsoEmployeeRow(existingRows, employee, fallbackIndex) {
+  const key = ksoEmployeeKey(employee);
+  const found = existingRows.find((row) => {
+    const rowKey = String(row.id || '').trim() || normalizeKsoFio(row.fio);
+    return rowKey === key || normalizeKsoFio(row.fio) === normalizeKsoFio(employee.fio);
+  });
+
+  return found?.rowNumber || fallbackIndex + 2;
+}
+
+function buildKsoHistoryUpdates(isoDate, result, data) {
+  const historyDateColumn = data.history.targetDateColumn >= 0
+    ? data.history.targetDateColumn
+    : getKsoDateColumnIndex(isoDate);
+  const historyTotalColumn = data.history.hyperTotalColumn >= 0
+    ? data.history.hyperTotalColumn
+    : getKsoHistoryTotalColumnIndex(isoDate);
+  const hyperEmployees = getKsoAssignmentEmployees(result, 'hyper').map((item) => item.employee);
+  const employeesToUpdate = Array.isArray(result.available) && result.available.length ? result.available : data.employees;
+  const updates = [];
+
+  employeesToUpdate.forEach((employee) => {
+    const fallbackIndex = Math.max(0, data.employees.findIndex((item) => ksoEmployeeKey(item) === ksoEmployeeKey(employee)));
+    const rowNumber = getKsoEmployeeRow(data.history.rows, employee, fallbackIndex);
+    const isHyper = hyperEmployees.some((item) => ksoEmployeeKey(item) === ksoEmployeeKey(employee));
+    const previous = data.history.rows.find((row) => row.rowNumber === rowNumber);
+    const nextTotal = Number(previous?.hyperCount || employee.hyperCount || 0) + (isHyper ? 1 : 0);
+
+    updates.push({
+      range: `'${escapeSheetName(data.historySheetName)}'!A${rowNumber}:B${rowNumber}`,
+      values: [[employee.id || '', employee.fio || '']]
+    });
+
+    updates.push({
+      range: `'${escapeSheetName(data.historySheetName)}'!${columnNameByIndex(historyDateColumn + 1)}${rowNumber}:${columnNameByIndex(historyDateColumn + 1)}${rowNumber}`,
+      values: [[isHyper ? 1 : '']]
+    });
+
+    updates.push({
+      range: `'${escapeSheetName(data.historySheetName)}'!${columnNameByIndex(historyTotalColumn + 1)}${rowNumber}:${columnNameByIndex(historyTotalColumn + 1)}${rowNumber}`,
+      values: [[nextTotal]]
+    });
+  });
+
+  return updates;
+}
+
+function buildKsoEmployeeCounterUpdates(result) {
+  return getKsoAssignmentEmployees(result, 'hyper')
+    .filter((item) => item.employee.rowNumber)
+    .map((item) => ({
+      range: `'${escapeSheetName(KSO_EMPLOYEES_SHEET_NAME)}'!E${item.employee.rowNumber}:E${item.employee.rowNumber}`,
+      values: [[Number(item.employee.monthHyperCount || item.employee.hyperCount || 0) + 1]]
+    }));
+}
+
+function buildKsoAnalyticsRows(result) {
+  const totals = new Map();
+
+  result.available.forEach((employee) => {
+    totals.set(ksoEmployeeKey(employee), {
+      employee,
+      hyper: Number(employee.monthHyperCount || 0),
+      medium: Number(employee.mediumCount || 0),
+      small: Number(employee.smallCount || 0),
+      points: Number(employee.points || 0),
+      lastHyper: employee.lastHyper || ''
+    });
+  });
+
+  result.assignments.forEach((assignment) => {
+    assignment.employees.forEach((employee) => {
+      const total = totals.get(ksoEmployeeKey(employee));
+      if (!total) {
+        return;
+      }
+
+      if (assignment.category === 'hyper') {
+        total.hyper += 1;
+        total.lastHyper = formatKsoDateHeader(result.isoDate);
+        total.points += 5;
+      } else if (assignment.category === 'medium') {
+        total.medium += 1;
+        total.points += 3;
+      } else {
+        total.small += 1;
+        total.points += 1;
+      }
+    });
+  });
+
+  return [
+    KSO_ANALYTICS_HEADERS,
+    ...[...totals.values()].map((total) => [
+      total.employee.fio,
+      total.hyper,
+      total.medium,
+      total.small,
+      total.points,
+      total.lastHyper
+    ])
+  ];
+}
+
+async function writeKsoAssignmentResult(isoDate, result, data) {
+  const sheets = getSheetsClient();
+  const dailyValues = [
+    [`Дата`, formatKsoDateHeader(isoDate), '', '', '', '', ''],
+    [`Всего сотрудников`, result.available.length, '', '', '', '', ''],
+    KSO_DAILY_HEADERS,
+    ...result.dailyRows
+  ];
+  const analyticsRows = buildKsoAnalyticsRows(result);
+  const updates = [
+    {
+      range: `'${escapeSheetName(KSO_DAILY_SHEET_NAME)}'!A1:G${dailyValues.length}`,
+      values: dailyValues
+    },
+    {
+      range: `'${escapeSheetName(KSO_ANALYTICS_SHEET_NAME)}'!A1:F${analyticsRows.length}`,
+      values: analyticsRows
+    },
+    ...buildKsoHistoryUpdates(isoDate, result, data),
+    ...buildKsoEmployeeCounterUpdates(result)
+  ];
+
+  await withTimeout(
+    sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: KSO_ASSIGNMENT_SHEET_ID,
+      requestBody: {
+        valueInputOption: 'USER_ENTERED',
+        data: updates
+      }
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'batchUpdate результата распределения КСО'
+  );
+}
+
+async function writeKsoManualAssignment(isoDate, employee, shop, data) {
+  const category = normalizeKsoText(shop.category).includes('гипер')
+    ? 'hyper'
+    : normalizeKsoText(shop.category).includes('сред') ? 'medium' : 'small';
+  const sheets = getSheetsClient();
+  const dailyRow = [
+    employee.fio,
+    employee.level,
+    employee.hyperCount || 0,
+    '',
+    '',
+    shop.category,
+    shop.code
+  ];
+  const updates = [
+    {
+      range: `'${escapeSheetName(KSO_DAILY_SHEET_NAME)}'!A4:G4`,
+      values: [dailyRow]
+    }
+  ];
+
+  if (category === 'hyper') {
+    const result = {
+      isoDate,
+      available: [employee],
+      assignments: [{ shop, category, employees: [employee] }],
+      dailyRows: [dailyRow]
+    };
+    updates.push(...buildKsoHistoryUpdates(isoDate, result, data));
+    if (employee.rowNumber) {
+      updates.push({
+        range: `'${escapeSheetName(KSO_EMPLOYEES_SHEET_NAME)}'!E${employee.rowNumber}:E${employee.rowNumber}`,
+        values: [[Number(employee.hyperCount || 0) + 1]]
+      });
+    }
+  }
+
+  await withTimeout(
+    sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: KSO_ASSIGNMENT_SHEET_ID,
+      requestBody: {
+        valueInputOption: 'USER_ENTERED',
+        data: updates
+      }
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'batchUpdate ручного назначения КСО'
+  );
+
+}
+
+function findKsoScheduleRow(scheduleRows, profile) {
+  const fio = normalizeKsoFio(profile?.fio);
+  return scheduleRows.find((row) => normalizeKsoFio(row[1]) === fio || normalizeKsoFio(row[2]) === fio);
+}
+
+function getKsoScheduleDateColumn(isoDate, headers) {
+  const day = Number(isoDate.slice(8, 10));
+  const directIndex = headers.findIndex((header) => Number(header) === day);
+  return directIndex >= 0 ? directIndex : day + 2;
+}
+
+async function writeKsoScheduleStatus(profile, isoDate, status, historySheetName) {
+  if (!profile?.fio) {
+    throw new Error('Не заполнен профиль сотрудника');
+  }
+
+  const sheetData = await getKsoAssignmentSheetData(isoDate, historySheetName);
+  const scheduleRows = sheetData.schedule || [];
+  const headers = scheduleRows[0] || [];
+  const row = findKsoScheduleRow(scheduleRows.slice(1), profile);
+
+  if (!row) {
+    throw new Error(`Сотрудник ${profile.fio} не найден на листе ${KSO_SCHEDULE_SHEET_NAME}`);
+  }
+
+  const rowNumber = scheduleRows.slice(1).indexOf(row) + 2;
+  const columnIndex = getKsoScheduleDateColumn(isoDate, headers);
+  const columnName = columnNameByIndex(columnIndex + 1);
+  const sheets = getSheetsClient();
+
+  await withTimeout(
+    sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: KSO_ASSIGNMENT_SHEET_ID,
+      requestBody: {
+        valueInputOption: 'USER_ENTERED',
+        data: [
+          {
+            range: `'${escapeSheetName(KSO_SCHEDULE_SHEET_NAME)}'!${columnName}${rowNumber}:${columnName}${rowNumber}`,
+            values: [[status]]
+          }
+        ]
+      }
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'batchUpdate статуса графика КСО'
+  );
+}
+
+function buildKsoScheduleRows(employees) {
+  return [
+    KSO_SCHEDULE_HEADERS,
+    ...employees.map((employee) => [
+      employee.id,
+      employee.fio,
+      employee.name,
+      ...Array.from({ length: 31 }, () => '')
+    ])
+  ];
+}
+
+function buildKsoHistoryRows(isoDate, employees) {
+  const headers = getKsoHistoryHeaders(isoDate);
+  const emptyDays = Array.from({ length: headers.length - KSO_HISTORY_HEADERS_PREFIX.length - 1 }, () => '');
+
+  return [
+    headers,
+    ...employees.map((employee) => [
+      employee.id,
+      employee.fio,
+      ...emptyDays,
+      0
+    ])
+  ];
+}
+
+function buildKsoAnalyticsInitRows(employees) {
+  return [
+    KSO_ANALYTICS_HEADERS,
+    ...employees.map((employee) => [
+      employee.fio,
+      0,
+      0,
+      0,
+      0,
+      ''
+    ])
+  ];
+}
+
+function buildKsoEmployeeRows(employees) {
+  return [
+    KSO_EMPLOYEE_HEADERS,
+    ...employees.map((employee) => [
+      employee.id,
+      employee.fio,
+      employee.name,
+      'Стандарт',
+      1,
+      0,
+      '',
+      '',
+      ''
+    ])
+  ];
+}
+
+function buildKsoShopRows(shops) {
+  return [
+    KSO_SHOP_HEADERS,
+    ...shops.map((shop) => [
+      shop.code,
+      shop.category || 'Средний',
+      shop.priority || 3,
+      shop.required || 1,
+      shop.flow || shop.region || ''
+    ])
+  ];
+}
+
+async function initializeKsoAssignmentSheet(isoDate, employees, shops, historySheetName) {
+  if (!KSO_ASSIGNMENT_SHEET_ID) {
+    throw new Error('Не задана переменная окружения GOOGLE_KSO_ASSIGNMENT_SHEET_ID');
+  }
+
+  const sheets = getSheetsClient();
+  await ensureKsoAssignmentSheets(sheets, isoDate, historySheetName);
+
+  const employeeRows = buildKsoEmployeeRows(employees);
+  const scheduleRows = buildKsoScheduleRows(employees);
+  const shopRows = buildKsoShopRows(shops);
+  const analyticsRows = buildKsoAnalyticsInitRows(employees);
+  const dailyRows = [KSO_DAILY_HEADERS];
+
+  await withTimeout(
+    sheets.spreadsheets.values.batchClear({
+      spreadsheetId: KSO_ASSIGNMENT_SHEET_ID,
+      requestBody: {
+        ranges: [
+          `'${escapeSheetName(KSO_EMPLOYEES_SHEET_NAME)}'!A:Z`,
+          `'${escapeSheetName(KSO_SCHEDULE_SHEET_NAME)}'!A:AH`,
+          `'${escapeSheetName(KSO_SHOPS_SHEET_NAME)}'!A:F`,
+          `'${escapeSheetName(KSO_ANALYTICS_SHEET_NAME)}'!A:F`,
+          `'${escapeSheetName(KSO_DAILY_SHEET_NAME)}'!A:G`
+        ]
+      }
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'очистка листов инициализации КСО'
+  );
+
+  await withTimeout(
+    sheets.spreadsheets.values.batchUpdate({
+      spreadsheetId: KSO_ASSIGNMENT_SHEET_ID,
+      requestBody: {
+        valueInputOption: 'USER_ENTERED',
+        data: [
+          {
+            range: `'${escapeSheetName(KSO_EMPLOYEES_SHEET_NAME)}'!A1:${columnNameByIndex(KSO_EMPLOYEE_HEADERS.length)}${employeeRows.length}`,
+            values: employeeRows
+          },
+          {
+            range: `'${escapeSheetName(KSO_SCHEDULE_SHEET_NAME)}'!A1:${columnNameByIndex(KSO_SCHEDULE_HEADERS.length)}${scheduleRows.length}`,
+            values: scheduleRows
+          },
+          {
+            range: `'${escapeSheetName(KSO_SHOPS_SHEET_NAME)}'!A1:${columnNameByIndex(KSO_SHOP_HEADERS.length)}${shopRows.length}`,
+            values: shopRows
+          },
+          {
+            range: `'${escapeSheetName(KSO_ANALYTICS_SHEET_NAME)}'!A1:F${analyticsRows.length}`,
+            values: analyticsRows
+          },
+          {
+            range: `'${escapeSheetName(KSO_DAILY_SHEET_NAME)}'!A1:G1`,
+            values: dailyRows
+          }
+        ]
+      }
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'batchUpdate инициализации КСО'
+  );
+
+  return {
+    employeesCount: employees.length,
+    shopsCount: shops.length,
+    spreadsheetId: KSO_ASSIGNMENT_SHEET_ID
+  };
+}
+
+module.exports = {
+  appendRow,
+  replaceFixationRows,
+  appendTextReportRow,
+  appendKsoReportRow,
+  appendTechReportRow,
+  getKsoAssignmentSheetData,
+  initializeKsoAssignmentSheet,
+  writeKsoAssignmentResult,
+  writeKsoManualAssignment,
+  writeKsoScheduleStatus
+};

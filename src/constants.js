@@ -40,6 +40,12 @@ const BOT_COMMANDS = [
   { name: 'employees', description: 'Список сотрудников' },
   { name: 'message', description: 'Админ: рассылка сообщения пользователям' },
   { name: 'admin', description: 'Админ: управление регионами и магазинами' },
+  { name: 'distribution', description: 'Админ: распределение сотрудников КСО' },
+  { name: 'initkso', description: 'Админ: инициализация таблицы КСО' },
+  { name: 'kso_analytics', description: 'Админ: аналитика КСО' },
+  { name: 'who_works', description: 'Админ: список работающих КСО' },
+  { name: 'manual', description: 'Админ: ручное назначение КСО' },
+  { name: 'kso_help', description: 'Команды КСО' },
   { name: 'setfio', description: 'Админ: изменить ФИО сотрудника' },
   { name: 'block', description: 'Админ: отключить доступ сотруднику' }
 ];
