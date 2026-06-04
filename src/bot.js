@@ -22,12 +22,14 @@ const {
   isIdRequest
 } = require('./updateUtils');
 const { isValidDate, parseAmount, todayMskPlus5 } = require('./validators');
-const {
-  formatDisplayDate,
-  isPastDate,
-  parseInputDate,
-  updateScheduleStatus
-} = require('./ksoAssignment');
+const { handleKsoReportCallback } = require('./callbacks/ksoReportCallbacks');
+const { handleKsoScheduleCallback } = require('./callbacks/ksoScheduleCallbacks');
+const { handleTechIssueCallback } = require('./callbacks/techIssueCallbacks');
+const { handleTextReportCallback } = require('./callbacks/textReportCallbacks');
+const { handleKsoReportText } = require('./handlers/ksoReportHandlers');
+const { handleKsoScheduleText } = require('./handlers/ksoScheduleHandlers');
+const { handleTechIssueText } = require('./handlers/techIssueHandlers');
+const { handleTextReportText } = require('./handlers/textReportHandlers');
 const {
   getProfile,
   getCatalogRegion,
@@ -51,7 +53,7 @@ const {
   saveRecentFixation,
   isAllowedUser
 } = require('./db');
-const { appendKsoReportRow, appendRow, appendTechReportRow, appendTextReportRow, replaceFixationRows } = require('./sheets');
+const { appendRow, replaceFixationRows } = require('./sheets');
 const {
   acceptConsent,
   askConsent,
@@ -90,26 +92,19 @@ const {
 const {
   askTextReportDate,
   askTextReportFio,
-  askTextReportText,
-  buildTextReportRow,
-  showTextReportConfirm
+  askTextReportText
 } = require('./flows/textReportFlow');
 const {
   askKsoDate,
-  askKsoText,
-  buildKsoReportRow,
-  showKsoConfirm
+  askKsoText
 } = require('./flows/ksoFlow');
 const {
   askKsoScheduleDate,
-  askKsoScheduleStatus,
-  showKsoScheduleConfirm
+  askKsoScheduleStatus
 } = require('./flows/ksoScheduleFlow');
 const {
   askTechReportDate,
-  askTechReportText,
-  buildTechReportRow,
-  showTechReportConfirm
+  askTechReportText
 } = require('./flows/techIssueFlow');
 const { savePhotoFromUpdate } = require('./photos');
 const { searchShops } = require('./shops');
@@ -326,7 +321,7 @@ function buildRepeatOrMenuAttachments(repeatPayload, repeatText) {
 function buildMainMenuAttachments() {
   return inlineKeyboard([
     [
-      { text: 'Фиксация', type: 'callback', payload: 'main_fixation' }
+      { text: 'Кражи КСО', type: 'callback', payload: 'main_fixation' }
     ],
     [
       { text: 'Отчет', type: 'callback', payload: 'main_text_report' }
@@ -338,7 +333,7 @@ function buildMainMenuAttachments() {
       { text: 'График КСО', type: 'callback', payload: 'main_kso_schedule' }
     ],
     [
-      { text: 'Отчет ТН', type: 'callback', payload: 'main_tech_report' }
+      { text: 'Тех. неполадки', type: 'callback', payload: 'main_tech_report' }
     ],
     [
       { text: 'Изменить запись', type: 'callback', payload: 'main_edit_record' }
@@ -616,46 +611,6 @@ async function startTechReportFlow(chatId, userId) {
 function isTextReportCommand(text) {
   const command = String(text || '').trim().toLowerCase();
   return command === '/report' || command === '/command';
-}
-
-function parseKsoScheduleCommand(text) {
-  const match = /^(работаю|выходной)\s+(\d{2}\.\d{2}(?:\.\d{4})?)$/i.exec(String(text || '').trim());
-  if (!match) {
-    return null;
-  }
-
-  const isoDate = parseInputDate(match[2]);
-  if (!isoDate) {
-    return null;
-  }
-
-  return {
-    isoDate,
-    status: match[1].toLowerCase() === 'работаю' ? 'Р' : 'В'
-  };
-}
-
-function normalizeYes(text) {
-  return ['да', 'д', 'yes', 'y'].includes(String(text || '').trim().toLowerCase());
-}
-
-async function handleKsoScheduleCommand(chatId, userId, command) {
-  const profile = getProfile(userId);
-  if (!profile) {
-    await startOnboarding(chatId, userId);
-    return;
-  }
-
-  if (isPastDate(command.isoDate)) {
-    saveSession(userId, STATES.AWAIT_KSO_SCHEDULE_CONFIRM, command);
-    await sendMessage(
-      chatId,
-      `Дата ${formatDisplayDate(command.isoDate)} уже прошла. Напишите «да», чтобы подтвердить изменение графика.`
-    );
-    return;
-  }
-
-  await sendMessage(chatId, await updateScheduleStatus(userId, profile, command.isoDate, command.status));
 }
 
 function omitFormFields(data, fields) {
@@ -1052,23 +1007,36 @@ async function handleCallback(update, chatId, userId, session) {
     return;
   }
 
-  if (payload === 'main_text_report' || payload === 'new_text_report') {
-    await startTextReportFlow(chatId, userId);
+  if (await handleTextReportCallback(update, chatId, userId, session, payload, {
+    sendFormMessage,
+    startFlow,
+    startTextReportFlow
+  })) {
     return;
   }
 
-  if (payload === 'main_kso_report' || payload === 'new_kso_report') {
-    await startKsoReportFlow(chatId, userId);
+  if (await handleKsoScheduleCallback(update, chatId, userId, session, payload, {
+    sendFormMessage,
+    showMainMenu,
+    startKsoScheduleFlow,
+    startOnboarding
+  })) {
     return;
   }
 
-  if (payload === 'main_kso_schedule') {
-    await startKsoScheduleFlow(chatId, userId);
+  if (await handleKsoReportCallback(update, chatId, userId, session, payload, {
+    sendFormMessage,
+    startFlow,
+    startKsoReportFlow
+  })) {
     return;
   }
 
-  if (payload === 'main_tech_report' || payload === 'new_tech_report') {
-    await startTechReportFlow(chatId, userId);
+  if (await handleTechIssueCallback(update, chatId, userId, session, payload, {
+    sendFormMessage,
+    startFlow,
+    startTechReportFlow
+  })) {
     return;
   }
 
@@ -1183,71 +1151,6 @@ async function handleCallback(update, chatId, userId, session) {
     }
     data = await sendFormMessage(chatId, data, `Магазин: ${shopText}`);
     await askDate(chatId, userId, data);
-    return;
-  }
-
-  if (payload === 'text_report_date_today') {
-    if (!session || session.state !== STATES.AWAIT_TEXT_REPORT_DATE) {
-      await askTextReportDate(chatId, userId, session?.data || {});
-      return;
-    }
-
-    let data = { ...session.data, date: todayMskPlus5() };
-    await deleteCallbackMessage(update);
-    data = await sendFormMessage(chatId, data, `Дата отчета: ${data.date}`);
-    await askTextReportText(chatId, userId, data);
-    return;
-  }
-
-  if (payload === 'kso_date_today') {
-    if (!session || session.state !== STATES.AWAIT_KSO_DATE) {
-      await askKsoDate(chatId, userId, session?.data || {});
-      return;
-    }
-
-    let data = { ...session.data, date: todayMskPlus5() };
-    await deleteCallbackMessage(update);
-    data = await sendFormMessage(chatId, data, `Дата отписки КСО: ${data.date}`);
-    await askKsoText(chatId, userId, data);
-    return;
-  }
-
-  if (payload === 'kso_schedule_status_work' || payload === 'kso_schedule_status_off') {
-    if (!session || session.state !== STATES.AWAIT_KSO_SCHEDULE_STATUS) {
-      await askKsoScheduleStatus(chatId, userId, session?.data || {});
-      return;
-    }
-
-    const status = payload === 'kso_schedule_status_work' ? 'Р' : 'В';
-    await deleteCallbackMessage(update);
-    const data = await sendFormMessage(chatId, { ...session.data, status }, `Статус графика КСО: ${status === 'Р' ? 'Работаю' : 'Выходной'}`);
-    await askKsoScheduleDate(chatId, userId, data);
-    return;
-  }
-
-  if (payload === 'kso_schedule_date_today') {
-    if (!session || session.state !== STATES.AWAIT_KSO_SCHEDULE_DATE) {
-      await askKsoScheduleDate(chatId, userId, session?.data || {});
-      return;
-    }
-
-    const isoDate = parseInputDate(todayMskPlus5());
-    await deleteCallbackMessage(update);
-    const data = await sendFormMessage(chatId, { ...session.data, isoDate }, `Дата графика КСО: ${formatDisplayDate(isoDate)}`);
-    await showKsoScheduleConfirm(chatId, userId, data);
-    return;
-  }
-
-  if (payload === 'tech_report_date_today') {
-    if (!session || session.state !== STATES.AWAIT_TECH_REPORT_DATE) {
-      await askTechReportDate(chatId, userId, session?.data || {});
-      return;
-    }
-
-    let data = { ...session.data, date: todayMskPlus5() };
-    await deleteCallbackMessage(update);
-    data = await sendFormMessage(chatId, data, `Дата технической неполадки: ${data.date}`);
-    await askTechReportText(chatId, userId, data);
     return;
   }
 
@@ -1423,118 +1326,6 @@ async function handleCallback(update, chatId, userId, session) {
     return;
   }
 
-  if (payload === 'text_report_restart') {
-    await deleteCallbackMessage(update);
-    await askTextReportDate(chatId, userId, {});
-    return;
-  }
-
-  if (payload === 'text_report_save') {
-    const currentSession = getSession(userId);
-    const profile = getProfile(userId);
-
-    if (!profile || !currentSession || currentSession.state !== STATES.TEXT_REPORT_CONFIRM) {
-      await sendMessage(chatId, 'Данные отчета для сохранения не найдены. Начнём заново.');
-      await startFlow(chatId, userId);
-      return;
-    }
-
-    try {
-      await sendCleanupMessage(chatId, userId, 'Сохраняю отчет в Google Sheets, пожалуйста подождите...');
-      await appendTextReportRow(buildTextReportRow(profile, currentSession.data));
-      await cleanupMessages(userId);
-      await deleteCallbackMessage(update);
-      saveSession(userId, STATES.IDLE, {});
-      await sendKeyboardMessage(
-        chatId,
-        userId,
-        '✅ Отчет сохранен.',
-        buildRepeatOrMenuAttachments('new_text_report', '+ Новый отчет')
-      );
-    } catch (error) {
-      logError('Не удалось сохранить текстовый отчет в Google Sheets:', error);
-      await sendMessage(chatId, 'Не удалось записать отчет в Google Sheets. Попробуйте сохранить ещё раз позже.');
-    }
-    return;
-  }
-
-  if (payload === 'kso_save') {
-    const currentSession = getSession(userId);
-    const profile = getProfile(userId);
-
-    if (!profile || !currentSession || currentSession.state !== STATES.KSO_CONFIRM) {
-      await sendMessage(chatId, 'Данные для сохранения не найдены. Начнём заново.');
-      await startFlow(chatId, userId);
-      return;
-    }
-
-    try {
-      await sendCleanupMessage(chatId, userId, 'Сохраняю отписку КСО в Google Sheets, пожалуйста подождите...');
-      await appendKsoReportRow(buildKsoReportRow(profile, currentSession.data));
-      await cleanupMessages(userId);
-      await deleteCallbackMessage(update);
-      saveSession(userId, STATES.IDLE, {});
-      await sendKeyboardMessage(
-        chatId,
-        userId,
-        '✅ Отчет КСО сохранен.',
-        buildRepeatOrMenuAttachments('new_kso_report', '+ Новый отчет КСО')
-      );
-    } catch (error) {
-      logError('Не удалось сохранить отписку КСО в Google Sheets:', error);
-      await sendMessage(chatId, 'Не удалось записать отписку КСО в Google Sheets. Попробуйте завершить ещё раз позже.');
-    }
-    return;
-  }
-
-  if (payload === 'kso_schedule_save') {
-    if (!session || session.state !== STATES.KSO_SCHEDULE_CONFIRM) {
-      await askKsoScheduleStatus(chatId, userId, {});
-      return;
-    }
-
-    const profile = getProfile(userId);
-    if (!profile) {
-      await startOnboarding(chatId, userId);
-      return;
-    }
-
-    await deleteCallbackMessage(update);
-    deleteSession(userId);
-    await sendMessage(chatId, await updateScheduleStatus(userId, profile, session.data.isoDate, session.data.status));
-    await showMainMenu(chatId, userId);
-    return;
-  }
-
-  if (payload === 'tech_report_save') {
-    const currentSession = getSession(userId);
-    const profile = getProfile(userId);
-
-    if (!profile || !currentSession || currentSession.state !== STATES.TECH_REPORT_CONFIRM) {
-      await sendMessage(chatId, 'Данные для сохранения не найдены. Начнём заново.');
-      await startFlow(chatId, userId);
-      return;
-    }
-
-    try {
-      await sendCleanupMessage(chatId, userId, 'Сохраняю отчет по технической неполадке в Google Sheets, пожалуйста подождите...');
-      await appendTechReportRow(buildTechReportRow(profile, currentSession.data));
-      await cleanupMessages(userId);
-      await deleteCallbackMessage(update);
-      saveSession(userId, STATES.IDLE, {});
-      await sendKeyboardMessage(
-        chatId,
-        userId,
-        '✅ Отчет ТН сохранен.',
-        buildRepeatOrMenuAttachments('new_tech_report', '+ Новый отчет ТН')
-      );
-    } catch (error) {
-      logError('Не удалось сохранить отчет по технической неполадке в Google Sheets:', error);
-      await sendMessage(chatId, 'Не удалось записать отчет по технической неполадке в Google Sheets. Попробуйте завершить ещё раз позже.');
-    }
-    return;
-  }
-
   if (payload === 'confirm_save') {
     const currentSession = getSession(userId);
     const profile = getProfile(userId);
@@ -1596,10 +1387,31 @@ async function handleCallback(update, chatId, userId, session) {
 
 async function handleText(update, chatId, userId, session) {
   const text = getText(update);
-  const ksoScheduleCommand = parseKsoScheduleCommand(text);
 
-  if (ksoScheduleCommand) {
-    await handleKsoScheduleCommand(chatId, userId, ksoScheduleCommand);
+  if (await handleKsoScheduleText(chatId, userId, session, text, {
+    sendFormMessage,
+    startOnboarding
+  })) {
+    return;
+  }
+
+  if (await handleKsoReportText(chatId, userId, session, text, {
+    sendFormMessage,
+    startOnboarding
+  })) {
+    return;
+  }
+
+  if (await handleTextReportText(chatId, userId, session, text, {
+    sendFormMessage
+  })) {
+    return;
+  }
+
+  if (await handleTechIssueText(chatId, userId, session, text, {
+    sendFormMessage,
+    startOnboarding
+  })) {
     return;
   }
 
@@ -1677,27 +1489,6 @@ async function handleText(update, chatId, userId, session) {
         userId,
         `Пароль принят. Текущая роль: ${ROLE_LABELS[role] || role}.\n\nВыберите действие:`
       );
-      return;
-    }
-
-    case STATES.AWAIT_KSO_SCHEDULE_CONFIRM: {
-      if (normalizeYes(text)) {
-        const profile = getProfile(userId);
-        if (!profile) {
-          await startOnboarding(chatId, userId);
-          return;
-        }
-
-        deleteSession(userId);
-        await sendMessage(
-          chatId,
-          await updateScheduleStatus(userId, profile, session.data.isoDate, session.data.status)
-        );
-        return;
-      }
-
-      deleteSession(userId);
-      await sendMessage(chatId, 'Изменение графика отменено.');
       return;
     }
 
@@ -1784,45 +1575,6 @@ async function handleText(update, chatId, userId, session) {
       return;
     }
 
-    case STATES.AWAIT_TEXT_REPORT_DATE: {
-      if (!isValidDate(text)) {
-        await cleanupMessages(userId);
-        await sendMessage(chatId, 'Дата отчета указана неверно. Введите дату в формате ДД.ММ.ГГГГ или нажмите «Сегодня».');
-        await askTextReportDate(chatId, userId, session.data);
-        return;
-      }
-
-      await deleteStoredKeyboard(userId);
-      await cleanupMessages(userId);
-      let data = { ...session.data, date: text };
-      data = await sendFormMessage(chatId, data, `Дата отчета: ${text}`);
-      await askTextReportText(chatId, userId, data);
-      return;
-    }
-
-    case STATES.AWAIT_TEXT_REPORT_TEXT: {
-      if (!text) {
-        await cleanupMessages(userId);
-        await sendMessage(chatId, 'Введите текст отчета:');
-        await askTextReportText(chatId, userId, session.data);
-        return;
-      }
-
-      await deleteStoredKeyboard(userId);
-      await cleanupMessages(userId);
-      let data = { ...session.data, reportText: text };
-      data = await sendFormMessage(chatId, data, `Отчет:\n${text}`);
-      if (!(await showTextReportConfirm(chatId, userId, data))) {
-        await sendMessage(chatId, 'Профиль не найден. Введите ФИО ещё раз.');
-        await askTextReportFio(chatId, userId, { continueToTextReport: true });
-      }
-      return;
-    }
-
-    case STATES.TEXT_REPORT_CONFIRM:
-      await sendMessage(chatId, 'Нажмите «Сохранить», чтобы записать отчет, или «Исправить», чтобы вернуться к тексту.');
-      return;
-
     case STATES.AWAIT_BROADCAST_TEXT: {
       if (!isAdmin(userId)) {
         await sendMessage(chatId, 'Команда доступна только администратору.');
@@ -1902,108 +1654,6 @@ async function handleText(update, chatId, userId, session) {
       }
       return;
     }
-
-    case STATES.AWAIT_KSO_DATE: {
-      if (!isValidDate(text)) {
-        await cleanupMessages(userId);
-        await sendMessage(chatId, 'Дата отписки КСО указана неверно. Введите дату в формате ДД.ММ.ГГГГ или нажмите «Сегодня».');
-        await askKsoDate(chatId, userId, session.data);
-        return;
-      }
-
-      await deleteStoredKeyboard(userId);
-      await cleanupMessages(userId);
-      let data = { ...session.data, date: text };
-      data = await sendFormMessage(chatId, data, `Дата отписки КСО: ${text}`);
-      await askKsoText(chatId, userId, data);
-      return;
-    }
-
-    case STATES.AWAIT_KSO_TEXT: {
-      if (!text) {
-        await cleanupMessages(userId);
-        await sendMessage(chatId, 'Введите текст отписки КСО:');
-        await askKsoText(chatId, userId, session.data);
-        return;
-      }
-
-      await deleteStoredKeyboard(userId);
-      await cleanupMessages(userId);
-      let data = { ...session.data, ksoText: text };
-      data = await sendFormMessage(chatId, data, `Отписка КСО:\n${text}`);
-      if (!(await showKsoConfirm(chatId, userId, data))) {
-        await startOnboarding(chatId, userId);
-      }
-      return;
-    }
-
-    case STATES.KSO_CONFIRM:
-      await sendMessage(chatId, 'Нажмите «Завершить», чтобы сохранить отписку КСО, или «Исправить», чтобы вернуться назад.');
-      return;
-
-    case STATES.AWAIT_KSO_SCHEDULE_STATUS:
-      await sendMessage(chatId, 'Выберите статус кнопкой: «Работаю» или «Выходной».');
-      await askKsoScheduleStatus(chatId, userId, session.data);
-      return;
-
-    case STATES.AWAIT_KSO_SCHEDULE_DATE: {
-      const isoDate = parseInputDate(text);
-      if (!isoDate) {
-        await cleanupMessages(userId);
-        await sendMessage(chatId, 'Дата указана неверно. Введите дату в формате ДД.ММ или ДД.ММ.ГГГГ или нажмите «Сегодня».');
-        await askKsoScheduleDate(chatId, userId, session.data);
-        return;
-      }
-
-      await deleteStoredKeyboard(userId);
-      await cleanupMessages(userId);
-      let data = { ...session.data, isoDate };
-      data = await sendFormMessage(chatId, data, `Дата графика КСО: ${formatDisplayDate(isoDate)}`);
-      await showKsoScheduleConfirm(chatId, userId, data);
-      return;
-    }
-
-    case STATES.KSO_SCHEDULE_CONFIRM:
-      await sendMessage(chatId, 'Нажмите «Сохранить», чтобы обновить график, или «Изменить», чтобы вернуться к дате.');
-      return;
-
-    case STATES.AWAIT_TECH_REPORT_DATE: {
-      if (!isValidDate(text)) {
-        await cleanupMessages(userId);
-        await sendMessage(chatId, 'Дата технической неполадки указана неверно. Введите дату в формате ДД.ММ.ГГГГ или нажмите «Сегодня».');
-        await askTechReportDate(chatId, userId, session.data);
-        return;
-      }
-
-      await deleteStoredKeyboard(userId);
-      await cleanupMessages(userId);
-      let data = { ...session.data, date: text };
-      data = await sendFormMessage(chatId, data, `Дата технической неполадки: ${text}`);
-      await askTechReportText(chatId, userId, data);
-      return;
-    }
-
-    case STATES.AWAIT_TECH_REPORT_TEXT: {
-      if (!text) {
-        await cleanupMessages(userId);
-        await sendMessage(chatId, 'Опишите техническую неполадку:');
-        await askTechReportText(chatId, userId, session.data);
-        return;
-      }
-
-      await deleteStoredKeyboard(userId);
-      await cleanupMessages(userId);
-      let data = { ...session.data, techReportText: text };
-      data = await sendFormMessage(chatId, data, `Техническая неполадка:\n${text}`);
-      if (!(await showTechReportConfirm(chatId, userId, data))) {
-        await startOnboarding(chatId, userId);
-      }
-      return;
-    }
-
-    case STATES.TECH_REPORT_CONFIRM:
-      await sendMessage(chatId, 'Нажмите «Завершить», чтобы сохранить отчет по технической неполадке, или «Исправить», чтобы вернуться назад.');
-      return;
 
     case STATES.AWAIT_DATE: {
       if (!isValidDate(text)) {
