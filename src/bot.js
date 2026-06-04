@@ -22,6 +22,7 @@ const {
   isIdRequest
 } = require('./updateUtils');
 const { isValidDate, parseAmount, todayMskPlus5 } = require('./validators');
+const { handleAdminCatalogCallback } = require('./callbacks/adminCatalogCallbacks');
 const { handleKsoReportCallback } = require('./callbacks/ksoReportCallbacks');
 const { handleKsoScheduleCallback } = require('./callbacks/ksoScheduleCallbacks');
 const { handleTechIssueCallback } = require('./callbacks/techIssueCallbacks');
@@ -30,16 +31,10 @@ const { handleKsoReportText } = require('./handlers/ksoReportHandlers');
 const { handleKsoScheduleText } = require('./handlers/ksoScheduleHandlers');
 const { handleTechIssueText } = require('./handlers/techIssueHandlers');
 const { handleTextReportText } = require('./handlers/textReportHandlers');
+const { handleAdminCatalogText } = require('./handlers/adminCatalogHandlers');
 const {
   getProfile,
   getCatalogRegion,
-  getCatalogShop,
-  addCatalogRegion,
-  renameCatalogRegion,
-  deleteCatalogRegion,
-  addCatalogShop,
-  updateCatalogShop,
-  deleteCatalogShop,
   saveProfile,
   deleteProfile,
   getSession,
@@ -109,12 +104,7 @@ const {
 const { savePhotoFromUpdate } = require('./photos');
 const { searchShops } = require('./shops');
 const {
-  askAdminRegionName,
-  askAdminShopData,
-  showAdminCatalogDeleteConfirm,
-  showAdminCatalogMenu,
-  showAdminCatalogRegions,
-  showAdminCatalogShops
+  showAdminCatalogMenu
 } = require('./flows/adminCatalogFlow');
 
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || '';
@@ -800,127 +790,7 @@ async function handleRevoke(chatId, userId) {
 async function handleCallback(update, chatId, userId, session) {
   const payload = getPayload(update);
 
-  if (payload.startsWith('admin_catalog_') && !isAdmin(userId)) {
-    await sendMessage(chatId, 'Доступ к управлению каталогом есть только у администратора.');
-    return;
-  }
-
-  if (payload === 'admin_catalog_menu') {
-    await deleteCallbackMessage(update);
-    await showAdminCatalogMenu(chatId, userId);
-    return;
-  }
-
-  if (payload === 'admin_catalog_add_region') {
-    await deleteCallbackMessage(update);
-    await askAdminRegionName(chatId, userId);
-    return;
-  }
-
-  if (payload === 'admin_catalog_edit_region' || payload === 'admin_catalog_delete_region') {
-    await deleteCallbackMessage(update);
-    await showAdminCatalogRegions(chatId, userId, payload.endsWith('edit_region') ? 'edit' : 'delete');
-    return;
-  }
-
-  if (payload === 'admin_catalog_add_shop' || payload === 'admin_catalog_edit_shop' || payload === 'admin_catalog_delete_shop') {
-    await deleteCallbackMessage(update);
-    const action = payload.includes('add_shop') ? 'add' : payload.includes('edit_shop') ? 'edit' : 'delete';
-    await showAdminCatalogRegions(chatId, userId, `${action}_shop`);
-    return;
-  }
-
-  if (payload.startsWith('admin_catalog_confirm_delete_')) {
-    const match = payload.match(/^admin_catalog_confirm_delete_(region|shop)_(\d+)$/);
-    if (!match) {
-      await showAdminCatalogMenu(chatId, userId);
-      return;
-    }
-
-    const [, entity, idText] = match;
-    const id = Number(idText);
-    await deleteCallbackMessage(update);
-
-    if (entity === 'region') {
-      const deleted = deleteCatalogRegion(id);
-      await showAdminCatalogMenu(
-        chatId,
-        userId,
-        deleted ? 'Регион удален.' : 'Нельзя удалить регион: сначала удалите все его магазины.'
-      );
-      return;
-    }
-
-    const deleted = deleteCatalogShop(id);
-    await showAdminCatalogMenu(chatId, userId, deleted ? 'Магазин удален.' : 'Магазин уже удален.');
-    return;
-  }
-
-  if (payload.startsWith('admin_catalog_region_')) {
-    const match = payload.match(/^admin_catalog_region_(edit|delete|add_shop|edit_shop|delete_shop)_(\d+)$/);
-    if (!match) {
-      await showAdminCatalogMenu(chatId, userId);
-      return;
-    }
-
-    const [, action, regionIdText] = match;
-    const regionId = Number(regionIdText);
-    await deleteCallbackMessage(update);
-
-    if (action === 'edit') {
-      await askAdminRegionName(chatId, userId, { adminCatalogRegionId: regionId });
-      return;
-    }
-
-    if (action === 'delete') {
-      const region = getCatalogRegion(regionId);
-      if (!region) {
-        await showAdminCatalogMenu(chatId, userId, 'Регион уже удален.');
-        return;
-      }
-      await showAdminCatalogDeleteConfirm(chatId, userId, 'region', region.id, region.name);
-      return;
-    }
-
-    if (action === 'add_shop') {
-      await askAdminShopData(chatId, userId, { adminCatalogRegionId: regionId });
-      return;
-    }
-
-    await showAdminCatalogShops(chatId, userId, action === 'edit_shop' ? 'edit' : 'delete', regionId);
-    return;
-  }
-
-  if (payload.startsWith('admin_catalog_shop_page_')) {
-    const match = payload.match(/^admin_catalog_shop_page_(edit|delete)_(\d+)_(\d+)$/);
-    if (match) {
-      await deleteCallbackMessage(update);
-      await showAdminCatalogShops(chatId, userId, match[1], Number(match[2]), Number(match[3]));
-    }
-    return;
-  }
-
-  if (payload.startsWith('admin_catalog_shop_')) {
-    const match = payload.match(/^admin_catalog_shop_(edit|delete)_(\d+)$/);
-    if (!match) {
-      await showAdminCatalogMenu(chatId, userId);
-      return;
-    }
-
-    const [, action, shopIdText] = match;
-    const shopId = Number(shopIdText);
-    await deleteCallbackMessage(update);
-    if (action === 'edit') {
-      await askAdminShopData(chatId, userId, { adminCatalogShopId: shopId });
-      return;
-    }
-
-    const shop = getCatalogShop(shopId);
-    if (!shop) {
-      await showAdminCatalogMenu(chatId, userId, 'Магазин уже удален.');
-      return;
-    }
-    await showAdminCatalogDeleteConfirm(chatId, userId, 'shop', shop.id, shop.name);
+  if (await handleAdminCatalogCallback(update, chatId, userId, payload, { isAdmin })) {
     return;
   }
 
@@ -1415,6 +1285,10 @@ async function handleText(update, chatId, userId, session) {
     return;
   }
 
+  if (await handleAdminCatalogText(chatId, userId, session, text, { isAdmin })) {
+    return;
+  }
+
   if (text === '/start') {
     await startFlow(chatId, userId);
     return;
@@ -1597,63 +1471,6 @@ async function handleText(update, chatId, userId, session) {
     case STATES.BROADCAST_CONFIRM:
       await sendMessage(chatId, 'Подтвердите рассылку кнопкой или отмените её.');
       return;
-
-    case STATES.AWAIT_ADMIN_REGION_NAME: {
-      if (!isAdmin(userId)) {
-        await sendMessage(chatId, 'Команда доступна только администратору.');
-        return;
-      }
-
-      if (!text) {
-        await askAdminRegionName(chatId, userId, session.data);
-        return;
-      }
-
-      try {
-        if (session.data.adminCatalogRegionId) {
-          renameCatalogRegion(session.data.adminCatalogRegionId, text);
-          await showAdminCatalogMenu(chatId, userId, 'Регион переименован.');
-        } else {
-          addCatalogRegion(text);
-          await showAdminCatalogMenu(chatId, userId, 'Регион добавлен.');
-        }
-      } catch (error) {
-        logError('Не удалось сохранить регион:', error);
-        await sendMessage(chatId, 'Не удалось сохранить регион. Возможно, такое название уже используется.');
-        await askAdminRegionName(chatId, userId, session.data);
-      }
-      return;
-    }
-
-    case STATES.AWAIT_ADMIN_SHOP_DATA: {
-      if (!isAdmin(userId)) {
-        await sendMessage(chatId, 'Команда доступна только администратору.');
-        return;
-      }
-
-      const [name, ...addressParts] = String(text || '').split('|');
-      const address = addressParts.join('|').trim();
-      if (!name.trim() || !address) {
-        await sendMessage(chatId, 'Введите данные в формате: Название | Адрес');
-        await askAdminShopData(chatId, userId, session.data);
-        return;
-      }
-
-      try {
-        if (session.data.adminCatalogShopId) {
-          updateCatalogShop(session.data.adminCatalogShopId, name, address);
-          await showAdminCatalogMenu(chatId, userId, 'Магазин изменен.');
-        } else {
-          addCatalogShop(session.data.adminCatalogRegionId, name, address);
-          await showAdminCatalogMenu(chatId, userId, 'Магазин добавлен.');
-        }
-      } catch (error) {
-        logError('Не удалось сохранить магазин:', error);
-        await sendMessage(chatId, 'Не удалось сохранить магазин. Проверьте данные и уникальность названия.');
-        await askAdminShopData(chatId, userId, session.data);
-      }
-      return;
-    }
 
     case STATES.AWAIT_DATE: {
       if (!isValidDate(text)) {
