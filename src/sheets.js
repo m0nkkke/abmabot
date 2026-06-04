@@ -7,6 +7,7 @@ const TECH_REPORTS_SHEET_ID = process.env.GOOGLE_TECH_REPORTS_SHEET_ID || '';
 const KSO_ASSIGNMENT_SHEET_ID = process.env.GOOGLE_KSO_ASSIGNMENT_SHEET_ID || SHEET_ID;
 const CREDENTIALS_PATH = process.env.GOOGLE_CREDENTIALS_PATH || './credentials/service-account.json';
 const DATA_SHEET_NAME = 'Данные';
+const ONLINE_THEFT_SHEET_NAME = process.env.GOOGLE_ONLINE_THEFT_SHEET_NAME || 'Онлайн кражи';
 const REPORTS_SHEET_NAME = process.env.GOOGLE_REPORTS_SHEET_NAME || 'Отчеты';
 const KSO_SHEET_NAME = process.env.GOOGLE_KSO_SHEET_NAME || 'Отписки КСО';
 const TECH_REPORTS_SHEET_NAME = process.env.GOOGLE_TECH_REPORTS_SHEET_NAME || 'Тех. неполадки';
@@ -28,12 +29,16 @@ const PHOTO_HEADERS = Array.from({ length: MAX_PHOTOS_PER_RECORD }, (_, index) =
 }).flat();
 const HEADERS = [...BASE_HEADERS, ...PHOTO_HEADERS];
 HEADERS.push('ID фиксации', 'record_id');
+const ONLINE_THEFT_HEADERS = [...BASE_HEADERS, 'Комментарий', ...PHOTO_HEADERS, 'ID фиксации', 'record_id'];
 const REPORT_HEADERS = ['ФИО', 'Дата', 'Отчет'];
 const KSO_HEADERS = ['ФИО', 'Дата', 'Отписка КСО'];
 const TECH_REPORT_HEADERS = ['ФИО', 'Дата', 'Техническая неполадка'];
 const HEADER_END_COLUMN = columnNameByIndex(HEADERS.length);
 const DATA_RANGE = `A:${HEADER_END_COLUMN}`;
 const HEADER_RANGE = `A1:${HEADER_END_COLUMN}1`;
+const ONLINE_THEFT_HEADER_END_COLUMN = columnNameByIndex(ONLINE_THEFT_HEADERS.length);
+const ONLINE_THEFT_DATA_RANGE = `A:${ONLINE_THEFT_HEADER_END_COLUMN}`;
+const ONLINE_THEFT_HEADER_RANGE = `A1:${ONLINE_THEFT_HEADER_END_COLUMN}1`;
 const REPORT_HEADER_END_COLUMN = columnNameByIndex(REPORT_HEADERS.length);
 const REPORT_DATA_RANGE = `A:${REPORT_HEADER_END_COLUMN}`;
 const REPORT_HEADER_RANGE = `A1:${REPORT_HEADER_END_COLUMN}1`;
@@ -215,6 +220,87 @@ async function ensureShopSheet(sheets, shop) {
       timeout: GOOGLE_REQUEST_TIMEOUT_MS
     }),
     'обновление заголовков листа'
+  );
+}
+
+async function ensureOnlineTheftSheet(sheets) {
+  log('Google Sheets: проверяем лист онлайн-краж.', { sheet: ONLINE_THEFT_SHEET_NAME });
+
+  const spreadsheet = await withTimeout(
+    sheets.spreadsheets.get({
+      spreadsheetId: SHEET_ID
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'получение метаданных таблицы онлайн-краж'
+  );
+
+  const existingSheet = spreadsheet.data.sheets.find((sheet) => {
+    return sheet.properties && sheet.properties.title === ONLINE_THEFT_SHEET_NAME;
+  });
+
+  if (!existingSheet) {
+    await withTimeout(
+      sheets.spreadsheets.batchUpdate({
+        spreadsheetId: SHEET_ID,
+        requestBody: {
+          requests: [
+            {
+              addSheet: {
+                properties: {
+                  title: ONLINE_THEFT_SHEET_NAME
+                }
+              }
+            }
+          ]
+        }
+      }, {
+        timeout: GOOGLE_REQUEST_TIMEOUT_MS
+      }),
+      'создание листа онлайн-краж'
+    );
+  }
+
+  await ensureSheetGridSize(sheets, ONLINE_THEFT_SHEET_NAME, 1, ONLINE_THEFT_HEADERS.length);
+
+  const headerResponse = await withTimeout(
+    sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: `'${escapeSheetName(ONLINE_THEFT_SHEET_NAME)}'!${ONLINE_THEFT_HEADER_RANGE}`
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'получение заголовков листа онлайн-краж'
+  );
+  const currentHeaders = headerResponse.data.values?.[0] || [];
+  const headersAreActual = ONLINE_THEFT_HEADERS.every((header, index) => currentHeaders[index] === header);
+
+  if (headersAreActual) {
+    return;
+  }
+
+  await withTimeout(
+    sheets.spreadsheets.values.clear({
+      spreadsheetId: SHEET_ID,
+      range: `'${escapeSheetName(ONLINE_THEFT_SHEET_NAME)}'!${ONLINE_THEFT_HEADER_RANGE}`
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'очистка старой строки заголовков листа онлайн-краж'
+  );
+
+  await withTimeout(
+    sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID,
+      range: `'${escapeSheetName(ONLINE_THEFT_SHEET_NAME)}'!${ONLINE_THEFT_HEADER_RANGE}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [ONLINE_THEFT_HEADERS]
+      }
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    'обновление заголовков листа онлайн-краж'
   );
 }
 
@@ -783,6 +869,41 @@ async function writeRowToNextFreeLine(sheets, sheetName, row) {
   );
 }
 
+async function writeOnlineTheftRowToNextFreeLine(sheets, row) {
+  const escapedSheetName = escapeSheetName(ONLINE_THEFT_SHEET_NAME);
+  const valuesResponse = await withTimeout(
+    sheets.spreadsheets.values.get({
+      spreadsheetId: SHEET_ID,
+      range: `'${escapedSheetName}'!${ONLINE_THEFT_DATA_RANGE}`,
+      majorDimension: 'ROWS'
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `поиск свободной строки на листе ${ONLINE_THEFT_SHEET_NAME}`
+  );
+
+  const nextRow = findNextDataRow(valuesResponse.data.values);
+  await ensureSheetGridSize(sheets, ONLINE_THEFT_SHEET_NAME, nextRow, ONLINE_THEFT_HEADERS.length);
+  log('Google Sheets: записываем онлайн-кражу в явный диапазон.', {
+    sheetName: ONLINE_THEFT_SHEET_NAME,
+    row: nextRow
+  });
+
+  await withTimeout(
+    sheets.spreadsheets.values.update({
+      spreadsheetId: SHEET_ID,
+      range: `'${escapedSheetName}'!A${nextRow}:${ONLINE_THEFT_HEADER_END_COLUMN}${nextRow}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values: [row]
+      }
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `запись строки ${nextRow} на лист ${ONLINE_THEFT_SHEET_NAME}`
+  );
+}
+
 async function findFixationRows(sheets, sheetName, fixationId) {
   const escapedSheetName = escapeSheetName(sheetName);
   const valuesResponse = await withTimeout(
@@ -979,6 +1100,23 @@ async function appendRow(shop, row) {
     log('Google Sheets: строка успешно записана.', { shop });
   } catch (error) {
     logError('Ошибка записи в Google Sheets:', error);
+    throw error;
+  }
+}
+
+async function appendOnlineTheftRow(row) {
+  try {
+    if (!SHEET_ID) {
+      throw new Error('Не задана переменная окружения GOOGLE_SHEET_ID');
+    }
+
+    log('Google Sheets: начинаем запись онлайн-кражи.', { sheet: ONLINE_THEFT_SHEET_NAME });
+    const sheets = getSheetsClient();
+    await ensureOnlineTheftSheet(sheets);
+    await writeOnlineTheftRowToNextFreeLine(sheets, row);
+    log('Google Sheets: онлайн-кража успешно записана.', { sheet: ONLINE_THEFT_SHEET_NAME });
+  } catch (error) {
+    logError('Ошибка записи онлайн-кражи в Google Sheets:', error);
     throw error;
   }
 }
@@ -1662,6 +1800,7 @@ async function initializeKsoAssignmentSheet(isoDate, employees, shops, historySh
 
 module.exports = {
   appendRow,
+  appendOnlineTheftRow,
   replaceFixationRows,
   appendTextReportRow,
   appendKsoReportRow,

@@ -96,6 +96,11 @@ async function askMissedReason(chatId, userId, data = {}) {
     await sendCleanupMessage(chatId, userId, 'Опишите причину упущенной кражи:', backKeyboard());
 }
 
+async function askOnlineComment(chatId, userId, data = {}) {
+    saveSession(userId, STATES.AWAIT_ONLINE_COMMENT, data);
+    await sendCleanupMessage(chatId, userId, 'Введите комментарий по онлайн-краже:', backKeyboard());
+}
+
 async function askCheckAction(chatId, userId, data = {}) {
     saveSession(userId, STATES.AWAIT_CHECK_ACTION, data);
     const addEventRows = [
@@ -149,10 +154,11 @@ function buildSummary(profile, data) {
         `Регион: ${data.region || 'Не указан'}`,
         `Магазин: ${data.shop || 'Не указан'}`,
         `Дата: ${data.date}`,
+        data.reportKind === 'online' ? `Комментарий: ${data.onlineComment || 'Не указан'}` : '',
         `Фото: ${Array.isArray(data.photos) ? data.photos.length : 0}`,
         '',
         ...formatEventRows(data)
-    ];
+    ].filter((row) => row !== '');
 
     return rows.join('\n');
 }
@@ -201,6 +207,7 @@ module.exports = {
     askPhoto,
     askCheckAction,
     askMissedReason,
+    askOnlineComment,
     askViolationType,
     buildSummary,
     showConfirm
