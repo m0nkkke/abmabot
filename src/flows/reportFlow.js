@@ -35,16 +35,20 @@ async function askItem(chatId, userId, data = {}) {
 async function askEventType(chatId, userId, data = {}) {
   await removeStoredKeyboard(userId);
   saveSession(userId, STATES.AWAIT_EVENT_TYPE, data);
+    const eventTypeButtons = [
+        [{ text: EVENT_TYPES.THEFT, type: 'callback', payload: 'event_type_theft' }],
+        [{ text: EVENT_TYPES.MISSED_THEFT, type: 'callback', payload: 'event_type_missed_theft' }]
+    ];
+    if (data.reportKind !== 'online') {
+        eventTypeButtons.push([{ text: EVENT_TYPES.VIOLATION, type: 'callback', payload: 'event_type_violation' }]);
+    }
+    eventTypeButtons.push(backButtonRow());
+
     await sendKeyboardMessage(
         chatId,
         userId,
-        'Выберите тип фиксации:',
-        inlineKeyboard([
-            [{ text: EVENT_TYPES.THEFT, type: 'callback', payload: 'event_type_theft' }],
-            [{ text: EVENT_TYPES.MISSED_THEFT, type: 'callback', payload: 'event_type_missed_theft' }],
-            [{ text: EVENT_TYPES.VIOLATION, type: 'callback', payload: 'event_type_violation' }],
-            backButtonRow()
-        ])
+        data.reportKind === 'online' ? 'Выберите тип кражи:' : 'Выберите тип фиксации:',
+        inlineKeyboard(eventTypeButtons)
     );
 }
 
@@ -105,16 +109,18 @@ async function askCheckAction(chatId, userId, data = {}) {
     saveSession(userId, STATES.AWAIT_CHECK_ACTION, data);
     const addEventRows = [
         [{ text: '+ Кража', type: 'callback', payload: 'check_add_theft' }],
-        [{ text: '+ Упущенная кража', type: 'callback', payload: 'check_add_missed_theft' }],
-        [{ text: '+ Нарушение', type: 'callback', payload: 'check_add_violation' }]
+        [{ text: '+ Упущенная кража', type: 'callback', payload: 'check_add_missed_theft' }]
       ];
+    if (data.reportKind !== 'online') {
+        addEventRows.push([{ text: '+ Нарушение', type: 'callback', payload: 'check_add_violation' }]);
+    }
     await sendCleanupMessage(
       chatId,
       userId,
       `${formatEventRows(data).join('\n')}\n\nДобавить еще событие в этот чек?`,
       inlineKeyboard([
         ...addEventRows,
-        [{ text: 'Перейти к фото', type: 'callback', payload: 'check_finish' }],
+        [{ text: data.reportKind === 'online' ? 'Перейти к комментарию' : 'Перейти к фото', type: 'callback', payload: 'check_finish' }],
         backButtonRow()
       ])
     );

@@ -707,10 +707,20 @@ async function handleFormBack(chatId, userId, session) {
                 return;
             }
 
+            if (session.data.reportKind === 'online' && session.data.eventType) {
+                await askEventType(chatId, userId, omitFormFields(session.data, ['item', 'eventType', 'violationType', 'amount', 'missedReason']));
+                return;
+            }
+
             await askDate(chatId, userId, omitFormFields(session.data, ['date', 'item']));
             return;
 
         case STATES.AWAIT_EVENT_TYPE:
+            if (session.data.reportKind === 'online' && !session.data.item) {
+                await askDate(chatId, userId, omitFormFields(session.data, ['date', 'eventType', 'violationType', 'amount']));
+                return;
+            }
+
             await askItem(chatId, userId, omitFormFields(session.data, ['item', 'eventType', 'violationType', 'amount']));
             return;
 
@@ -1107,6 +1117,11 @@ async function handleCallback(update, chatId, userId, session) {
         let data = { ...session.data, date: todayMskPlus5() };
         await deleteCallbackMessage(update);
         data = await sendFormMessage(chatId, data, `Дата: ${data.date}`);
+        if (data.reportKind === 'online') {
+            await askEventType(chatId, userId, data);
+            return;
+        }
+
         await askItem(chatId, userId, data);
         return;
     }
@@ -1129,9 +1144,19 @@ async function handleCallback(update, chatId, userId, session) {
             return;
         }
 
+        if (session.data.reportKind === 'online' && eventType === EVENT_TYPES.VIOLATION) {
+            await askEventType(chatId, userId, session.data);
+            return;
+        }
+
         await deleteCallbackMessage(update);
         let nextData = { ...session.data, eventType };
         nextData = await sendFormMessage(chatId, nextData, `Тип фиксации: ${eventType}`);
+        if (nextData.reportKind === 'online' && !nextData.item) {
+            await askItem(chatId, userId, nextData);
+            return;
+        }
+
         if (eventType === EVENT_TYPES.VIOLATION) {
             await askViolationType(chatId, userId, nextData);
             return;
@@ -1228,6 +1253,11 @@ async function handleCallback(update, chatId, userId, session) {
     if (payload === 'check_add_violation') {
         if (!session || session.state !== STATES.AWAIT_CHECK_ACTION) {
             await askCheckAction(chatId, userId, session?.data || {});
+            return;
+        }
+
+        if (session.data.reportKind === 'online') {
+            await askCheckAction(chatId, userId, session.data);
             return;
         }
 
@@ -1583,6 +1613,11 @@ async function handleText(update, chatId, userId, session) {
                 await cleanupMessages(userId);
                 let data = { ...session.data, date: text };
                 data = await sendFormMessage(chatId, data, `Дата: ${text}`);
+                if (data.reportKind === 'online') {
+                    await askEventType(chatId, userId, data);
+                    return;
+                }
+
                 await askItem(chatId, userId, data);
                 return;
             }
