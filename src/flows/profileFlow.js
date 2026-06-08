@@ -6,7 +6,7 @@ const { STATES } = require('../states');
 const { removeStoredKeyboard, sendKeyboardMessage } = require('./keyboardSession');
 
 async function showRegionPage(chatId, userId, data = {}) {
-  const recentShops = data.adminEditUserId || data.skipRecentShops ? [] : listRecentShops(userId, 5);
+  const recentShops = data.adminEditUserId || data.skipRecentShops ? [] : listRecentShops(userId, 1);
   const buttons = recentShops.map((shop, index) => ([
     { text: shop.shop, type: 'callback', payload: `recent_shop_${index}` }
   ]));
@@ -32,7 +32,7 @@ async function showRegionPage(chatId, userId, data = {}) {
     chatId,
     userId,
     recentShops.length
-      ? 'Выберите недавний магазин, регион или введите магазин текстом:'
+      ? 'Выберите последний магазин, регион или введите магазин текстом:'
       : 'Выберите регион или введите магазин текстом:',
     inlineKeyboard(buttons)
   );

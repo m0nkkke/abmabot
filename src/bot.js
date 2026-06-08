@@ -388,10 +388,35 @@ async function showMainMenu(chatId, userId, text = 'Выберите дейст�
     await sendKeyboardMessage(chatId, userId, text, buildMainMenuAttachments());
 }
 
-function formatRecentFixation(fixation, index) {
+function formatRecentEvent(event, data) {
+    const item = event.item || data.item || 'Товар не указан';
+    const eventLabel = event.violationType ? `${event.eventType}: ${event.violationType}` : event.eventType || 'Тип не указан';
+    const amount = event.amount !== undefined && event.amount !== null && event.amount !== ''
+        ? `${event.amount} руб.`
+        : 'сумма не указана';
+
+    return `${item} — ${eventLabel}, ${amount}`;
+}
+
+function formatRecentFixationDetails(fixation, index) {
     const data = fixation.data || {};
     const events = Array.isArray(data.events) ? data.events : [];
-    return `${index + 1}. ${data.date || 'Без даты'} · ${data.shop || 'Без магазина'} · событий: ${events.length}`;
+    const eventRows = events.length
+        ? events.slice(0, 3).map((event) => `   ${formatRecentEvent(event, data)}`)
+        : [`   ${data.item || 'Товар не указан'} — событий нет`];
+    if (events.length > 3) {
+        eventRows.push(`   ...и еще ${events.length - 3}`);
+    }
+
+    return [
+        `№${index + 1}: ${data.date || 'Без даты'} · ${data.shop || 'Без магазина'}`,
+        ...eventRows
+    ].join('\n');
+}
+
+function formatRecentFixationButton(fixation, index) {
+    const data = fixation.data || {};
+    return `Изменить №${index + 1} · ${data.date || 'Без даты'} · ${data.shop || 'Без магазина'}`;
 }
 
 async function showRecentFixations(chatId, userId) {
@@ -407,10 +432,14 @@ async function showRecentFixations(chatId, userId) {
     await sendKeyboardMessage(
         chatId,
         userId,
-        'Выберите фиксацию, которую нужно изменить:',
+        [
+            'Выберите фиксацию, которую нужно изменить:',
+            '',
+            ...recentFixations.map(formatRecentFixationDetails)
+        ].join('\n'),
         inlineKeyboard([
             ...recentFixations.map((fixation, index) => ([
-                { text: formatRecentFixation(fixation, index), type: 'callback', payload: `edit_fixation_${index}` }
+                { text: formatRecentFixationButton(fixation, index), type: 'callback', payload: `edit_fixation_${index}` }
             ])), [{ text: '← В меню', type: 'callback', payload: 'main_menu' }]
         ])
     );
@@ -953,7 +982,14 @@ async function handleCallback(update, chatId, userId, session) {
         }
 
         await deleteCallbackMessage(update);
-        await sendMessage(chatId, 'Заполните обновленные данные для выбранной записи.');
+        await sendMessage(
+            chatId,
+            [
+                'Заполните обновленные данные для выбранной записи.',
+                '',
+                formatRecentFixationDetails(fixation, index)
+            ].join('\n')
+        );
         await showRegionPage(chatId, userId, {
             editFixationId: fixation.fixationId,
             editOriginalRegion: fixation.data.region || 'Без региона'

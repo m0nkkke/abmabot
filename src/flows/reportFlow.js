@@ -107,13 +107,15 @@ async function askOnlineComment(chatId, userId, data = {}) {
 
 async function askCheckAction(chatId, userId, data = {}) {
     saveSession(userId, STATES.AWAIT_CHECK_ACTION, data);
-    const addEventRows = [
-        [{ text: '+ Кража', type: 'callback', payload: 'check_add_theft' }],
-        [{ text: '+ Упущенная кража', type: 'callback', payload: 'check_add_missed_theft' }]
-      ];
-    if (data.reportKind !== 'online') {
-        addEventRows.push([{ text: '+ Нарушение', type: 'callback', payload: 'check_add_violation' }]);
-    }
+    const addEventRows = data.reportKind === 'online'
+        ? [
+            [{ text: '+ Кража', type: 'callback', payload: 'check_add_theft' }],
+            [{ text: '+ Упущенная кража', type: 'callback', payload: 'check_add_missed_theft' }]
+        ]
+        : [
+            [{ text: '+ Упущенная кража', type: 'callback', payload: 'check_add_missed_theft' }],
+            [{ text: '+ Нарушение', type: 'callback', payload: 'check_add_violation' }]
+        ];
     await sendCleanupMessage(
       chatId,
       userId,
