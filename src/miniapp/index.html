@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Фиксации</title>
+  <link rel="stylesheet" href="/miniapp/styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div class="brand-mark" aria-hidden="true">
+        <span></span>
+      </div>
+      <div>
+        <h1>Фиксации</h1>
+        <p>Рабочая форма сотрудника</p>
+      </div>
+    </header>
+
+    <nav class="tabs" aria-label="Сценарии">
+      <button class="tab active" data-tab="fixation">Фиксация</button>
+      <button class="tab" data-tab="report">Отчет</button>
+      <button class="tab" data-tab="kso">КСО</button>
+      <button class="tab" data-tab="tech">Тех. неполадка</button>
+    </nav>
+
+    <section class="panel active" id="fixation">
+      <form id="fixationForm" class="form-grid">
+        <section class="form-section">
+          <div class="section-title">
+            <h2>Основные данные</h2>
+          </div>
+
+          <label>
+            <span>ФИО</span>
+            <input name="fio" autocomplete="name" required>
+          </label>
+
+          <div class="two-cols">
+            <label>
+              <span>Регион</span>
+              <select name="regionId" required></select>
+            </label>
+            <label>
+              <span>Магазин</span>
+              <select name="shopId" required></select>
+            </label>
+          </div>
+
+          <label>
+            <span>Дата</span>
+            <input name="date" placeholder="ДД.ММ.ГГГГ" required>
+          </label>
+        </section>
+
+        <section class="form-section">
+          <div class="section-title row-title">
+            <h2>Позиции</h2>
+            <button class="icon-btn" type="button" id="addEventBtn" title="Добавить позицию">+</button>
+          </div>
+          <div id="eventsList" class="events-list"></div>
+        </section>
+
+        <section class="form-section photos-section">
+          <div class="section-title">
+            <h2>Фото</h2>
+            <span id="photoCounter">0/10</span>
+          </div>
+          <label class="photo-drop">
+            <input type="file" id="photoInput" accept="image/*" multiple>
+            <strong>Добавить фото</strong>
+            <span>до 10 файлов</span>
+          </label>
+          <div id="photoGrid" class="photo-grid"></div>
+        </section>
+
+        <aside class="summary">
+          <h2>Сводка</h2>
+          <div id="fixationSummary"></div>
+          <button class="primary-btn" type="submit">Сохранить фиксацию</button>
+          <p class="status" id="fixationStatus"></p>
+        </aside>
+      </form>
+    </section>
+
+    <section class="panel" id="report">
+      <form class="simple-form" data-report-endpoint="/api/miniapp/text-report">
+        <h2>Текстовый отчет</h2>
+        <label><span>ФИО</span><input name="fio" required></label>
+        <label><span>Дата</span><input name="date" placeholder="ДД.ММ.ГГГГ" required></label>
+        <label><span>Отчет</span><textarea name="text" rows="8" required></textarea></label>
+        <button class="primary-btn" type="submit">Сохранить отчет</button>
+        <p class="status"></p>
+      </form>
+    </section>
+
+    <section class="panel" id="kso">
+      <form class="simple-form" data-report-endpoint="/api/miniapp/kso-report">
+        <h2>Отписка КСО</h2>
+        <label><span>ФИО</span><input name="fio" required></label>
+        <label><span>Дата</span><input name="date" placeholder="ДД.ММ.ГГГГ" required></label>
+        <label><span>Отписка</span><textarea name="text" rows="8" required></textarea></label>
+        <button class="primary-btn" type="submit">Сохранить отписку</button>
+        <p class="status"></p>
+      </form>
+    </section>
+
+    <section class="panel" id="tech">
+      <form class="simple-form" data-report-endpoint="/api/miniapp/tech-report">
+        <h2>Техническая неполадка</h2>
+        <label><span>ФИО</span><input name="fio" required></label>
+        <label><span>Дата</span><input name="date" placeholder="ДД.ММ.ГГГГ" required></label>
+        <label><span>Описание</span><textarea name="text" rows="8" required></textarea></label>
+        <button class="primary-btn" type="submit">Сохранить</button>
+        <p class="status"></p>
+      </form>
+    </section>
+  </main>
+
+  <template id="eventTemplate">
+    <article class="event-card">
+      <div class="event-head">
+        <strong></strong>
+        <button type="button" class="remove-event" title="Удалить позицию">×</button>
+      </div>
+      <label><span>Товар</span><input class="event-item" required></label>
+      <div class="two-cols">
+        <label>
+          <span>Тип</span>
+          <select class="event-type" required></select>
+        </label>
+        <label class="violation-field hidden">
+          <span>Вид нарушения</span>
+          <select class="violation-type"></select>
+        </label>
+      </div>
+      <label><span>Сумма</span><input class="event-amount" inputmode="decimal" required></label>
+      <label class="missed-field hidden"><span>Причина упущенной кражи</span><textarea class="event-missed" rows="3"></textarea></label>
+    </article>
+  </template>
+
+  <script src="/miniapp/app.js"></script>
+</body>
+</html>

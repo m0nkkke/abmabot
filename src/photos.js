@@ -81,6 +81,45 @@ async function savePhotoFromUpdate(update, userId) {
   };
 }
 
+function parseDataUrlImage(dataUrl) {
+  const match = String(dataUrl || '').match(/^data:image\/(png|jpe?g|webp);base64,(.+)$/i);
+  if (!match) {
+    return null;
+  }
+
+  return Buffer.from(match[2], 'base64');
+}
+
+async function savePhotoDataUrl(dataUrl, userId = 'miniapp') {
+  const buffer = parseDataUrlImage(dataUrl);
+  if (!buffer) {
+    throw new Error('Некорректный формат фото. Ожидается data URL изображения.');
+  }
+
+  if (!PHOTO_PUBLIC_BASE_URL) {
+    throw new Error('Не задан PHOTO_PUBLIC_BASE_URL или WEBHOOK_URL для формирования ссылки на фото');
+  }
+
+  ensurePhotoStorageDir();
+
+  const fileName = buildPhotoFileName(userId);
+  const outputPath = path.join(PHOTO_STORAGE_DIR, fileName);
+
+  await sharp(buffer)
+    .rotate()
+    .resize({
+      width: PHOTO_MAX_WIDTH,
+      withoutEnlargement: true
+    })
+    .webp({ quality: PHOTO_WEBP_QUALITY })
+    .toFile(outputPath);
+
+  return {
+    photoFileName: fileName,
+    photoUrl: `${PHOTO_PUBLIC_BASE_URL}/${encodeURIComponent(fileName)}`
+  };
+}
+
 async function cleanupOldPhotos() {
   ensurePhotoStorageDir();
 
@@ -146,6 +185,7 @@ function startPhotoCleanupScheduler() {
 module.exports = {
   PHOTO_STORAGE_DIR,
   cleanupOldPhotos,
+  savePhotoDataUrl,
   startPhotoCleanupScheduler,
   savePhotoFromUpdate
 };
