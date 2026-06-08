@@ -2,14 +2,13 @@ const { getProfile, getSession, saveSession } = require('../db');
 const { inlineKeyboard } = require('../keyboards');
 const { logError } = require('../logger');
 const { sendMessage } = require('../maxClient');
-const { appendTechReportRow } = require('../sheets');
+const { createTechReport } = require('../services/reportService');
 const { STATES } = require('../states');
 const { todayMskPlus5 } = require('../validators');
 const { cleanupMessages, deleteCallbackMessage, sendCleanupMessage } = require('../flows/cleanupFlow');
 const {
   askTechReportDate,
-  askTechReportText,
-  buildTechReportRow
+  askTechReportText
 } = require('../flows/techIssueFlow');
 const { sendKeyboardMessage } = require('../flows/keyboardSession');
 
@@ -51,7 +50,11 @@ async function handleTechIssueCallback(update, chatId, userId, session, payload,
 
     try {
       await sendCleanupMessage(chatId, userId, 'Сохраняю отчет по технической неполадке в Google Sheets, пожалуйста подождите...');
-      await appendTechReportRow(buildTechReportRow(profile, currentSession.data));
+      await createTechReport({
+        fio: profile.fio,
+        date: currentSession.data.date,
+        text: currentSession.data.techReportText
+      });
       await cleanupMessages(userId);
       await deleteCallbackMessage(update);
       saveSession(userId, STATES.IDLE, {});

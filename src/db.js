@@ -88,6 +88,14 @@ db.exec(`
     name TEXT PRIMARY KEY,
     applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS miniapp_sessions (
+    token TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL,
+    used_at INTEGER
+  );
 `);
 
 const employeeColumns = db.pragma('table_info(employees)').map((column) => column.name);
@@ -120,6 +128,21 @@ const upsertSessionStmt = db.prepare(`
     data = excluded.data
 `);
 const deleteSessionStmt = db.prepare('DELETE FROM sessions WHERE user_id = ?');
+const insertMiniAppSessionStmt = db.prepare(`
+  INSERT INTO miniapp_sessions (token, user_id, created_at, expires_at)
+  VALUES (@token, @userId, @createdAt, @expiresAt)
+`);
+const getMiniAppSessionStmt = db.prepare(`
+  SELECT token, user_id, created_at, expires_at, used_at
+  FROM miniapp_sessions
+  WHERE token = ?
+`);
+const markMiniAppSessionUsedStmt = db.prepare(`
+  UPDATE miniapp_sessions
+  SET used_at = COALESCE(used_at, @usedAt)
+  WHERE token = @token
+`);
+const deleteExpiredMiniAppSessionsStmt = db.prepare('DELETE FROM miniapp_sessions WHERE expires_at <= ?');
 
 const getConsentStmt = db.prepare('SELECT user_id, policy_version, text, accepted_at FROM consents WHERE user_id = ?');
 const upsertConsentStmt = db.prepare(`
@@ -354,6 +377,52 @@ function saveSession(userId, state, data = {}) {
 
 function deleteSession(userId) {
   deleteSessionStmt.run(String(userId));
+}
+
+function createMiniAppSession(token, userId, expiresAt) {
+  const now = Date.now();
+  insertMiniAppSessionStmt.run({
+    token: String(token),
+    userId: String(userId),
+    createdAt: now,
+    expiresAt: Number(expiresAt)
+  });
+
+  return {
+    token: String(token),
+    userId: String(userId),
+    createdAt: now,
+    expiresAt: Number(expiresAt),
+    usedAt: null
+  };
+}
+
+function getMiniAppSession(token) {
+  const row = getMiniAppSessionStmt.get(String(token));
+  if (!row) {
+    return null;
+  }
+
+  return {
+    token: row.token,
+    userId: row.user_id,
+    createdAt: row.created_at,
+    expiresAt: row.expires_at,
+    usedAt: row.used_at
+  };
+}
+
+function markMiniAppSessionUsed(token) {
+  const usedAt = Date.now();
+  markMiniAppSessionUsedStmt.run({
+    token: String(token),
+    usedAt
+  });
+  return usedAt;
+}
+
+function deleteExpiredMiniAppSessions(now = Date.now()) {
+  return deleteExpiredMiniAppSessionsStmt.run(Number(now)).changes;
 }
 
 function getConsent(userId) {
@@ -596,6 +665,10 @@ module.exports = {
   getSession,
   saveSession,
   deleteSession,
+  createMiniAppSession,
+  getMiniAppSession,
+  markMiniAppSessionUsed,
+  deleteExpiredMiniAppSessions,
   getConsent,
   saveConsent,
   deleteConsent,

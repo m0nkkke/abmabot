@@ -184,6 +184,11 @@ textarea {
   resize: vertical;
 }
 
+.readonly-field {
+  background: #f7f9fb;
+  color: var(--muted);
+}
+
 input:focus,
 select:focus,
 textarea:focus {
@@ -335,6 +340,23 @@ textarea:focus {
 
 .status.success {
   color: var(--accent-strong);
+}
+
+.auth-state {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+}
+
+.auth-panel {
+  width: min(460px, 100%);
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
 }
 
 @media (max-width: 840px) {

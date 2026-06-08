@@ -1,5 +1,7 @@
 const state = {
   config: null,
+  token: null,
+  profile: null,
   photos: [],
   events: []
 };
@@ -27,6 +29,53 @@ function setStatus(element, text, type = '') {
   element.className = `status ${type}`.trim();
 }
 
+function initAuthToken() {
+  const params = new URLSearchParams(window.location.search);
+  const token = params.get('token') || sessionStorage.getItem('miniappToken') || '';
+
+  if (token) {
+    sessionStorage.setItem('miniappToken', token);
+    state.token = token;
+  }
+}
+
+async function fetchMiniAppJson(url, options = {}) {
+  const headers = new Headers(options.headers || {});
+
+  if (state.token) {
+    headers.set('Authorization', `Bearer ${state.token}`);
+  }
+
+  const response = await fetch(url, {
+    ...options,
+    headers
+  });
+  const result = await response.json().catch(() => ({}));
+
+  if (!response.ok || result.ok === false) {
+    throw new Error(result.error || 'Ошибка запроса');
+  }
+
+  return result;
+}
+
+function getProfileFio() {
+  return state.profile?.fio || '';
+}
+
+function applyFioDefaults(scope = document) {
+  const fio = getProfileFio();
+  if (!fio) {
+    return;
+  }
+
+  scope.querySelectorAll('[name="fio"]').forEach((input) => {
+    input.value = fio;
+    input.readOnly = true;
+    input.classList.add('readonly-field');
+  });
+}
+
 function fillSelect(select, items, getValue, getText) {
   select.innerHTML = '';
   items.forEach((item) => {
@@ -35,6 +84,27 @@ function fillSelect(select, items, getValue, getText) {
     option.textContent = getText(item);
     select.append(option);
   });
+}
+
+function applyProfileDefaults() {
+  const profile = state.profile;
+  if (!profile) {
+    return;
+  }
+
+  applyFioDefaults();
+
+  if (profile.regionId) {
+    fixationForm.regionId.value = String(profile.regionId);
+  }
+
+  updateShopSelect();
+
+  if (profile.shopId) {
+    fixationForm.shopId.value = String(profile.shopId);
+  }
+
+  renderSummary();
 }
 
 function getSelectedRegion() {
@@ -170,18 +240,11 @@ function renderSummary() {
 }
 
 async function submitJson(url, payload) {
-  const response = await fetch(url, {
+  return fetchMiniAppJson(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload)
   });
-  const result = await response.json().catch(() => ({}));
-
-  if (!response.ok || result.ok === false) {
-    throw new Error(result.error || 'Ошибка сохранения');
-  }
-
-  return result;
 }
 
 async function handleFixationSubmit(event) {
@@ -227,6 +290,7 @@ async function handleSimpleReportSubmit(event) {
       text: form.text.value
     });
     form.reset();
+    applyFioDefaults(form);
     form.date.value = todayRu();
     setStatus(status, 'Сохранено.', 'success');
   } catch (error) {
@@ -248,11 +312,13 @@ function initTabs() {
 }
 
 async function init() {
-  const response = await fetch('/api/miniapp/config');
-  state.config = await response.json();
+  initAuthToken();
+  state.config = await fetchMiniAppJson('/api/miniapp/bootstrap');
+  state.profile = state.config.user?.profile || null;
 
   fillSelect(fixationForm.regionId, state.config.regions, (region) => region.id, (region) => region.name);
   updateShopSelect();
+  applyProfileDefaults();
   fixationForm.date.value = todayRu();
   document.querySelectorAll('.simple-form [name="date"]').forEach((input) => {
     input.value = todayRu();
@@ -282,5 +348,19 @@ async function init() {
 }
 
 init().catch((error) => {
-  document.body.innerHTML = `<main class="app-shell"><p class="status error">${error.message}</p></main>`;
+  const needsBotLogin = /mini-app|бота/i.test(error.message || '');
+  if (needsBotLogin) {
+    sessionStorage.removeItem('miniappToken');
+  }
+
+  const title = needsBotLogin ? 'Нужен вход через бота' : 'Не удалось открыть mini-app';
+  const message = error.message || 'Попробуйте открыть mini-app позже.';
+  document.body.innerHTML = `
+    <main class="app-shell auth-state">
+      <section class="auth-panel">
+        <h1>${title}</h1>
+        <p class="status error">${message}</p>
+      </section>
+    </main>
+  `;
 });
