@@ -92,9 +92,14 @@ label span,
 .tab,
 .icon-btn,
 .primary-btn,
+.secondary-btn,
 .remove-event {
   border: 0;
   cursor: pointer;
+}
+
+.topbar-action {
+  margin-left: auto;
 }
 
 .tab {
@@ -312,6 +317,16 @@ textarea:focus {
   border-radius: 8px;
   background: var(--accent);
   color: #fff;
+  font-weight: 700;
+}
+
+.secondary-btn {
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel);
+  color: var(--text);
   font-weight: 700;
 }
 

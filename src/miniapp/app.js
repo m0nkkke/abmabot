@@ -13,6 +13,7 @@ const photoInput = document.querySelector('#photoInput');
 const photoGrid = document.querySelector('#photoGrid');
 const photoCounter = document.querySelector('#photoCounter');
 const fixationStatus = document.querySelector('#fixationStatus');
+const menuReturnBtn = document.querySelector('#menuReturnBtn');
 const summary = document.querySelector('#fixationSummary');
 
 function todayRu() {
@@ -31,12 +32,29 @@ function setStatus(element, text, type = '') {
 
 function initAuthToken() {
   const params = new URLSearchParams(window.location.search);
-  const token = params.get('token') || sessionStorage.getItem('miniappToken') || '';
+  const token = params.get('token')
+    || params.get('WebAppStartParam')
+    || getMaxStartParam()
+    || sessionStorage.getItem('miniappToken')
+    || '';
 
   if (token) {
     sessionStorage.setItem('miniappToken', token);
     state.token = token;
   }
+}
+
+function getMaxStartParam() {
+  const startParam = window.WebApp?.initDataUnsafe?.start_param;
+  if (!startParam) {
+    return '';
+  }
+
+  if (typeof startParam === 'string') {
+    return startParam;
+  }
+
+  return startParam.token || startParam.payload || '';
 }
 
 async function fetchMiniAppJson(url, options = {}) {
@@ -311,6 +329,19 @@ function initTabs() {
   });
 }
 
+function initMenuReturn() {
+  const handleReturn = () => {
+    window.close();
+    setTimeout(() => {
+      menuReturnBtn.blur();
+    }, 100);
+  };
+
+  menuReturnBtn?.addEventListener('click', handleReturn);
+  window.WebApp?.BackButton?.show?.();
+  window.WebApp?.BackButton?.onClick?.(handleReturn);
+}
+
 async function init() {
   initAuthToken();
   state.config = await fetchMiniAppJson('/api/miniapp/bootstrap');
@@ -327,6 +358,7 @@ async function init() {
   addEvent();
   renderPhotos();
   initTabs();
+  initMenuReturn();
 
   fixationForm.regionId.addEventListener('change', updateShopSelect);
   fixationForm.shopId.addEventListener('change', renderSummary);

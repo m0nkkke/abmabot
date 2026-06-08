@@ -243,6 +243,25 @@ function buildMainMenuAttachments() {
     ]);
 }
 
+function buildMiniAppOpenAttachments(login) {
+    const webAppUrl = new URL(login.url);
+    webAppUrl.searchParams.delete('token');
+
+    return inlineKeyboard([
+        [
+            {
+                text: 'Открыть mini-app',
+                type: 'open_app',
+                web_app: webAppUrl.toString(),
+                payload: login.token
+            }
+        ],
+        [
+            { text: 'Отмена', type: 'callback', payload: 'main_menu' }
+        ]
+    ]);
+}
+
 function buildBroadcastConfirmAttachments() {
     return inlineKeyboard([
         [{ text: '✅ Отправить всем', type: 'callback', payload: 'broadcast_send' }],
@@ -840,11 +859,10 @@ async function handleCallback(update, chatId, userId, session) {
         await sendMessage(
             chatId,
             [
-                'Ссылка для входа в mini-app:',
-                login.url,
-                '',
-                `Ссылка действительна примерно ${ttlHours} ч.`
-            ].join('\n')
+                'Mini-app готов к открытию.',
+                `Доступ действителен примерно ${ttlHours} ч.`
+            ].join('\n'),
+            buildMiniAppOpenAttachments(login)
         );
         return;
     }
