@@ -63,6 +63,9 @@ async function fetchMiniAppJson(url, options = {}) {
   if (state.token) {
     headers.set('Authorization', `Bearer ${state.token}`);
   }
+  if (window.WebApp?.initData) {
+    headers.set('X-Max-WebApp-Data', window.WebApp.initData);
+  }
 
   const response = await fetch(url, {
     ...options,

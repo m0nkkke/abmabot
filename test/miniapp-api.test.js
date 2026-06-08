@@ -1,10 +1,29 @@
 const assert = require('node:assert/strict');
+const { createHmac } = require('node:crypto');
 const { after, beforeEach, describe, test } = require('node:test');
 const express = require('express');
 const { miniAppApiRouter } = require('../src/miniapp');
-const { createMiniAppLogin } = require('../src/services/miniAppAuthService');
+const { createMiniAppLogin, validateMaxWebAppInitData } = require('../src/services/miniAppAuthService');
 
 const originalMiniAppAuthRequired = process.env.MINIAPP_AUTH_REQUIRED;
+const originalRequireMaxInitData = process.env.MINIAPP_REQUIRE_MAX_INIT_DATA;
+const originalMaxBotToken = process.env.MAX_BOT_TOKEN;
+
+function signMaxInitData(params, botToken) {
+  const encodedParams = Object.entries(params)
+    .map(([key, value]) => [key, encodeURIComponent(value)])
+    .sort(([left], [right]) => left.localeCompare(right));
+  const launchParams = encodedParams
+    .map(([key, value]) => `${key}=${decodeURIComponent(value)}`)
+    .join('\n');
+  const secretKey = createHmac('sha256', 'WebAppData').update(botToken).digest();
+  const hash = createHmac('sha256', secretKey).update(launchParams).digest('hex');
+
+  return [
+    ...encodedParams.map(([key, value]) => `${key}=${value}`),
+    `hash=${hash}`
+  ].join('&');
+}
 
 function createTestServer() {
   const app = express();
@@ -36,15 +55,28 @@ async function requestJson(baseUrl, path, options = {}) {
 
 beforeEach(() => {
   process.env.MINIAPP_AUTH_REQUIRED = 'false';
+  process.env.MINIAPP_REQUIRE_MAX_INIT_DATA = 'false';
+  process.env.MAX_BOT_TOKEN = 'test-max-token';
 });
 
 after(() => {
   if (originalMiniAppAuthRequired === undefined) {
     delete process.env.MINIAPP_AUTH_REQUIRED;
-    return;
+  } else {
+    process.env.MINIAPP_AUTH_REQUIRED = originalMiniAppAuthRequired;
   }
 
-  process.env.MINIAPP_AUTH_REQUIRED = originalMiniAppAuthRequired;
+  if (originalRequireMaxInitData === undefined) {
+    delete process.env.MINIAPP_REQUIRE_MAX_INIT_DATA;
+  } else {
+    process.env.MINIAPP_REQUIRE_MAX_INIT_DATA = originalRequireMaxInitData;
+  }
+
+  if (originalMaxBotToken === undefined) {
+    delete process.env.MAX_BOT_TOKEN;
+  } else {
+    process.env.MAX_BOT_TOKEN = originalMaxBotToken;
+  }
 });
 
 describe('miniapp API smoke', () => {
@@ -129,6 +161,60 @@ describe('miniapp API smoke', () => {
       assert.equal(response.status, 200);
       assert.equal(body.user.userId, 'smoke-user');
       assert.equal(Array.isArray(body.regions), true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('validates MAX WebApp initData signature', () => {
+    const initData = signMaxInitData({
+      auth_date: '1771409719',
+      query_id: 'query-1',
+      start_param: 'payload-token',
+      user: JSON.stringify({
+        id: 12345,
+        first_name: 'Max',
+        last_name: 'User',
+        username: 'max_user',
+        language_code: 'ru',
+        photo_url: null
+      })
+    }, 'test-max-token');
+
+    const data = validateMaxWebAppInitData(initData, 'test-max-token');
+    assert.equal(data.user.id, 12345);
+    assert.equal(data.start_param, 'payload-token');
+    assert.equal(validateMaxWebAppInitData(initData.replace('payload-token', 'other-token'), 'test-max-token'), null);
+  });
+
+  test('requires signed MAX initData when enabled', async () => {
+    process.env.MINIAPP_AUTH_REQUIRED = 'true';
+    process.env.MINIAPP_REQUIRE_MAX_INIT_DATA = 'true';
+    const login = createMiniAppLogin('12345');
+    const initData = signMaxInitData({
+      auth_date: '1771409719',
+      query_id: 'query-2',
+      start_param: login.token,
+      user: JSON.stringify({ id: 12345, first_name: 'Max', last_name: 'User' })
+    }, 'test-max-token');
+    const server = createTestServer();
+
+    try {
+      const denied = await requestJson(server.baseUrl, '/api/miniapp/bootstrap', {
+        headers: {
+          Authorization: `Bearer ${login.token}`
+        }
+      });
+      const accepted = await requestJson(server.baseUrl, '/api/miniapp/bootstrap', {
+        headers: {
+          Authorization: `Bearer ${login.token}`,
+          'X-Max-WebApp-Data': initData
+        }
+      });
+
+      assert.equal(denied.response.status, 401);
+      assert.equal(accepted.response.status, 200);
+      assert.equal(accepted.body.user.userId, '12345');
     } finally {
       await server.close();
     }

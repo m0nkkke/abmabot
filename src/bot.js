@@ -244,18 +244,22 @@ function buildMainMenuAttachments() {
 }
 
 function buildMiniAppOpenAttachments(login) {
-    const webAppUrl = new URL(login.url);
-    webAppUrl.searchParams.delete('token');
+    const maxWebApp = process.env.MINIAPP_MAX_WEB_APP || '';
+    const openButton = maxWebApp
+        ? {
+            text: 'Открыть mini-app',
+            type: 'open_app',
+            web_app: maxWebApp,
+            payload: login.token
+        }
+        : {
+            text: 'Открыть mini-app',
+            type: 'link',
+            url: login.url
+        };
 
     return inlineKeyboard([
-        [
-            {
-                text: 'Открыть mini-app',
-                type: 'open_app',
-                web_app: webAppUrl.toString(),
-                payload: login.token
-            }
-        ],
+        [openButton],
         [
             { text: 'Отмена', type: 'callback', payload: 'main_menu' }
         ]
