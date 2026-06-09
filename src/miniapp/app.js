@@ -255,6 +255,56 @@ async function addPhotoFiles(files) {
   setStatus(fixationStatus, imageFiles.length === 1 ? 'Фото добавлено.' : `Фото добавлены: ${imageFiles.length}.`, '');
 }
 
+function renderPhotoDropHint() {
+  if (!photoDrop) {
+    return;
+  }
+
+  photoDrop.innerHTML = '<strong>Вставить фото</strong><span>кликните сюда и нажмите Ctrl+V со скриншотом</span>';
+}
+
+async function addPhotoSource(src) {
+  if (!src || state.photos.length >= state.config.maxPhotos) {
+    return false;
+  }
+
+  if (src.startsWith('data:image/')) {
+    state.photos.push(src);
+    return true;
+  }
+
+  const response = await fetch(src);
+  const blob = await response.blob();
+  state.photos.push(await fileToDataUrl(new File([blob], `clipboard-${Date.now()}.png`, { type: blob.type || 'image/png' })));
+  return true;
+}
+
+async function captureInsertedPhotosFromDrop() {
+  const images = [...(photoDrop?.querySelectorAll('img') || [])];
+  if (images.length === 0) {
+    return false;
+  }
+
+  let added = 0;
+  for (const image of images) {
+    if (await addPhotoSource(image.src)) {
+      added++;
+    }
+  }
+
+  renderPhotoDropHint();
+  renderPhotos();
+  renderSummary();
+
+  if (added > 0) {
+    setStatus(fixationStatus, added === 1 ? 'Фото добавлено.' : `Фото добавлены: ${added}.`, '');
+    return true;
+  }
+
+  setStatus(fixationStatus, 'Достигнут лимит фото для одной фиксации.', 'error');
+  return false;
+}
+
 function getImageFilesFromPaste(event) {
   return [
     ...(event.clipboardData?.files || []),
@@ -605,14 +655,19 @@ async function init() {
     const files = getImageFilesFromPaste(event);
     if (files.length === 0) {
       if (photoDrop?.contains(event.target)) {
-        event.preventDefault();
-        setStatus(fixationStatus, 'В буфере не найдено изображение.', 'error');
+        setTimeout(async () => {
+          if (!(await captureInsertedPhotosFromDrop())) {
+            renderPhotoDropHint();
+            setStatus(fixationStatus, 'В буфере не найдено изображение.', 'error');
+          }
+        }, 0);
       }
       return;
     }
 
     event.preventDefault();
     await addPhotoFiles(files);
+    renderPhotoDropHint();
   });
 
   document.addEventListener('keydown', async (event) => {
@@ -630,6 +685,7 @@ async function init() {
 
     if (await addPhotosFromClipboardApi()) {
       event.preventDefault();
+      renderPhotoDropHint();
     }
   });
 }
