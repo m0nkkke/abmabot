@@ -12,7 +12,6 @@ const fixationForm = document.querySelector('#fixationForm');
 const eventsList = document.querySelector('#eventsList');
 const eventTemplate = document.querySelector('#eventTemplate');
 const photoDrop = document.querySelector('#photoDrop');
-const photoInput = document.querySelector('#photoInput');
 const photoGrid = document.querySelector('#photoGrid');
 const photoCounter = document.querySelector('#photoCounter');
 const fixationStatus = document.querySelector('#fixationStatus');
@@ -585,28 +584,30 @@ async function init() {
     form.addEventListener('submit', handleSimpleReportSubmit);
   });
 
-  photoInput.addEventListener('change', async () => {
-    await addPhotoFiles(photoInput.files);
-    photoInput.value = '';
-  });
-
   photoDrop?.addEventListener('click', (event) => {
-    if (event.target === photoInput) {
-      return;
-    }
-    photoInput.click();
+    event.currentTarget.focus();
   });
 
   photoDrop?.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' || event.key === ' ') {
       event.preventDefault();
-      photoInput.click();
+      event.currentTarget.focus();
+    }
+  });
+
+  photoDrop?.addEventListener('beforeinput', (event) => {
+    if (event.inputType !== 'insertFromPaste') {
+      event.preventDefault();
     }
   });
 
   document.addEventListener('paste', async (event) => {
     const files = getImageFilesFromPaste(event);
     if (files.length === 0) {
+      if (photoDrop?.contains(event.target)) {
+        event.preventDefault();
+        setStatus(fixationStatus, 'В буфере не найдено изображение.', 'error');
+      }
       return;
     }
 
@@ -620,7 +621,10 @@ async function init() {
     }
 
     const activeTag = document.activeElement?.tagName;
-    if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || document.activeElement?.isContentEditable) {
+    if (
+      document.activeElement !== photoDrop
+      && (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || document.activeElement?.isContentEditable)
+    ) {
       return;
     }
 

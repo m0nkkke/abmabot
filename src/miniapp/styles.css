@@ -249,16 +249,18 @@ textarea:focus {
   border-radius: 8px;
   background: var(--soft);
   text-align: center;
-  cursor: pointer;
+  cursor: text;
+  user-select: none;
+}
+
+.photo-drop strong,
+.photo-drop span {
+  pointer-events: none;
 }
 
 .photo-drop:focus-visible {
   outline: 3px solid rgba(32, 143, 99, 0.28);
   outline-offset: 2px;
-}
-
-.photo-drop input {
-  display: none;
 }
 
 .photo-grid {

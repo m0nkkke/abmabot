@@ -77,10 +77,9 @@
             <h2>Фото</h2>
             <span id="photoCounter">0/10</span>
           </div>
-          <div class="photo-drop" id="photoDrop" role="button" tabindex="0">
-            <input type="file" id="photoInput" accept="image/*" multiple>
-            <strong>Добавить фото</strong>
-            <span>до 10 файлов или Ctrl+V со скриншотом</span>
+          <div class="photo-drop" id="photoDrop" tabindex="0" contenteditable="true" role="textbox" aria-label="Вставьте скриншот из буфера обмена">
+            <strong>Вставить фото</strong>
+            <span>кликните сюда и нажмите Ctrl+V со скриншотом</span>
           </div>
           <div id="photoGrid" class="photo-grid"></div>
         </section>
