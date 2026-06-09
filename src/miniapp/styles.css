@@ -330,6 +330,22 @@ textarea:focus {
   font-weight: 700;
 }
 
+.recent-list {
+  display: grid;
+  gap: 8px;
+}
+
+.recent-list h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.recent-btn {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+}
+
 .primary-btn:disabled {
   opacity: 0.62;
   cursor: wait;

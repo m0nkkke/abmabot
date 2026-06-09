@@ -1,6 +1,6 @@
 const { randomUUID } = require('crypto');
 const { EVENT_TYPES, MAX_PHOTOS_PER_RECORD, VIOLATION_TYPES } = require('../constants');
-const { getCatalogShop } = require('../db');
+const { getCatalogShop, listRecentFixations, saveRecentFixation } = require('../db');
 const { savePhotoDataUrl } = require('../photos');
 const { appendOnlineTheftRow, appendRow, replaceFixationRows } = require('../sheets');
 const { isValidDate, parseAmount } = require('../validators');
@@ -153,6 +153,22 @@ function buildFixationRow({ fio, shop, date, event, photos, fixationId }) {
   ];
 }
 
+function buildRecentFixationData({ shop, date, events }) {
+  return {
+    region: shop.region || '',
+    shop: shop.name || '',
+    date: date || '',
+    item: '',
+    events: events.map((event) => ({
+      item: event.item || '',
+      eventType: event.eventType,
+      violationType: event.violationType || '',
+      amount: event.amount,
+      missedReason: event.missedReason || ''
+    }))
+  };
+}
+
 function buildBotPhotoCells(data) {
   return buildPhotoCells(getPhotos(data));
 }
@@ -265,7 +281,7 @@ async function savePhotos(photoDataUrls, userId) {
   return saved;
 }
 
-async function createFixation({ fio, date, shopId, events: rawEvents, photos: rawPhotos, userId }) {
+async function createFixation({ fio, date, shopId, events: rawEvents, photos: rawPhotos, userId, editFixationId, editOriginalRegion }) {
   const normalizedFio = normalizeText(fio);
   const normalizedDate = normalizeText(date);
   const shop = getShopOrThrow(shopId);
@@ -286,18 +302,39 @@ async function createFixation({ fio, date, shopId, events: rawEvents, photos: ra
   }
 
   const photos = await savePhotos(rawPhotos, userId || 'miniapp');
-  const fixationId = randomUUID();
+  const fixationId = editFixationId || randomUUID();
+  const rows = [];
 
   for (const event of events) {
-    const row = buildFixationRow({
+    rows.push(buildFixationRow({
       fio: normalizedFio,
       shop,
       date: normalizedDate,
       event,
       photos,
       fixationId
-    });
-    await appendRow(shop.region || 'Без региона', row);
+    }));
+  }
+
+  if (editFixationId) {
+    await replaceFixationRows(
+      editOriginalRegion || shop.region || 'Без региона',
+      shop.region || 'Без региона',
+      editFixationId,
+      rows
+    );
+  } else {
+    for (const row of rows) {
+      await appendRow(shop.region || 'Без региона', row);
+    }
+  }
+
+  if (userId) {
+    saveRecentFixation(
+      userId,
+      fixationId,
+      buildRecentFixationData({ shop, date: normalizedDate, events })
+    );
   }
 
   return {
@@ -307,13 +344,75 @@ async function createFixation({ fio, date, shopId, events: rawEvents, photos: ra
   };
 }
 
+async function createOnlineTheft({ fio, date, shopId, events: rawEvents, photos: rawPhotos, onlineComment, userId }) {
+  const normalizedFio = normalizeText(fio);
+  const normalizedDate = normalizeText(date);
+  const shop = getShopOrThrow(shopId);
+  const events = normalizeEvents(rawEvents);
+  const comment = normalizeText(onlineComment);
+
+  if (!normalizedFio) {
+    throw createValidationError('Укажите ФИО');
+  }
+
+  if (!isValidDate(normalizedDate)) {
+    throw createValidationError('Укажите дату в формате ДД.ММ.ГГГГ');
+  }
+
+  validateEvents(events);
+
+  if (events.some((event) => event.eventType === EVENT_TYPES.VIOLATION)) {
+    throw createValidationError('Для онлайн-краж доступны только кража и упущенная кража');
+  }
+
+  if (!comment) {
+    throw createValidationError('Укажите комментарий к онлайн-краже');
+  }
+
+  if (!Array.isArray(rawPhotos) || rawPhotos.length < 1) {
+    throw createValidationError('Добавьте хотя бы одно фото');
+  }
+
+  const photos = await savePhotos(rawPhotos, userId || 'miniapp');
+  const profile = { fio: normalizedFio };
+  const rows = buildOnlineTheftRows(profile, {
+    reportKind: 'online',
+    region: shop.region || '',
+    shop: shop.name || '',
+    date: normalizedDate,
+    events,
+    photos,
+    onlineComment: comment
+  });
+
+  for (const row of rows) {
+    await appendOnlineTheftRow(row.row);
+  }
+
+  return {
+    fixationId: rows[0]?.fixationId || null,
+    rows: events.length,
+    photos: photos.length
+  };
+}
+
+function listMiniAppRecentFixations(userId, limit = 5) {
+  if (!userId) {
+    return [];
+  }
+
+  return listRecentFixations(userId, limit);
+}
+
 module.exports = {
   buildBotFixationRows,
   buildFixationRow,
   buildOnlineTheftRows,
   createFixation,
+  createOnlineTheft,
   getEvents,
   getPhotos,
+  listMiniAppRecentFixations,
   saveBotFixation,
   normalizeEvents
 };

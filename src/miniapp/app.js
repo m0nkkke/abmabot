@@ -3,7 +3,9 @@ const state = {
   token: null,
   profile: null,
   photos: [],
-  events: []
+  events: [],
+  mode: 'fixation',
+  recentFixations: []
 };
 
 const fixationForm = document.querySelector('#fixationForm');
@@ -15,6 +17,8 @@ const photoCounter = document.querySelector('#photoCounter');
 const fixationStatus = document.querySelector('#fixationStatus');
 const menuReturnBtn = document.querySelector('#menuReturnBtn');
 const summary = document.querySelector('#fixationSummary');
+const startOnlineBtn = document.querySelector('#startOnlineBtn');
+const cancelEditBtn = document.querySelector('#cancelEditBtn');
 
 function todayRu() {
   const now = new Date();
@@ -141,12 +145,16 @@ function updateShopSelect() {
 
 function eventTypeEntries() {
   const types = state.config.eventTypes;
+  if (state.mode === 'online') {
+    return [types.THEFT, types.MISSED_THEFT].filter(Boolean);
+  }
+
   return [types.THEFT, types.MISSED_THEFT, types.VIOLATION];
 }
 
 function violationTypeEntries() {
   const types = state.config.violationTypes;
-  return [types.SHORTAGE, types.OVERCHARGE, types.BAG, types.CONTAINER, types.RESORT].filter(Boolean);
+  return [types.SHORTAGE, types.OVERCHARGE, types.BAG, types.CONTAINER, types.RESORT, types.WRONG_BARCODE].filter(Boolean);
 }
 
 function addEvent(data = {}) {
@@ -260,6 +268,138 @@ function renderSummary() {
   `;
 }
 
+function activatePanel(panelId) {
+  document.querySelectorAll('.tab').forEach((tab) => {
+    tab.classList.toggle('active', tab.dataset.tab === panelId);
+  });
+  document.querySelectorAll('.panel').forEach((panel) => {
+    panel.classList.toggle('active', panel.id === panelId);
+  });
+}
+
+function setRecordMode(mode) {
+  state.mode = mode;
+  fixationForm.mode.value = mode;
+
+  const isOnline = mode === 'online';
+  const isEdit = mode === 'edit';
+  const onlineCommentField = fixationForm.querySelector('.online-comment-field');
+  const submitButton = fixationForm.querySelector('.primary-btn');
+
+  onlineCommentField?.classList.toggle('hidden', !isOnline);
+  if (fixationForm.onlineComment) {
+    fixationForm.onlineComment.required = isOnline;
+    if (!isOnline) {
+      fixationForm.onlineComment.value = '';
+    }
+  }
+
+  cancelEditBtn?.classList.toggle('hidden', !isEdit);
+  submitButton.textContent = isOnline
+    ? 'Сохранить онлайн-кражу'
+    : isEdit
+      ? 'Сохранить изменение'
+      : 'Сохранить фиксацию';
+
+  state.events = state.events.map((item) => {
+    if (isOnline && item.eventType === state.config.eventTypes.VIOLATION) {
+      return { ...item, eventType: state.config.eventTypes.THEFT };
+    }
+    return item;
+  });
+
+  renderEvents();
+  renderRecentFixations();
+}
+
+function resetRecordForm(mode = 'fixation') {
+  const fio = fixationForm.fio.value;
+  const regionId = fixationForm.regionId.value;
+  const shopId = fixationForm.shopId.value;
+  const date = fixationForm.date.value || todayRu();
+
+  fixationForm.reset();
+  fixationForm.fio.value = fio;
+  fixationForm.regionId.value = regionId;
+  updateShopSelect();
+  fixationForm.shopId.value = shopId;
+  fixationForm.date.value = date;
+  fixationForm.editFixationId.value = '';
+  fixationForm.editOriginalRegion.value = '';
+  applyFioDefaults(fixationForm);
+
+  state.photos = [];
+  state.events = [];
+  addEvent();
+  renderPhotos();
+  setRecordMode(mode);
+}
+
+function findRegionByName(name) {
+  return state.config.regions.find((region) => region.name === name);
+}
+
+function selectRegionShopByNames(regionName, shopName) {
+  const region = findRegionByName(regionName) || state.config.regions[0];
+  if (region) {
+    fixationForm.regionId.value = String(region.id);
+    updateShopSelect();
+    const shop = (region.shops || []).find((item) => item.name === shopName) || region.shops?.[0];
+    if (shop) {
+      fixationForm.shopId.value = String(shop.id);
+    }
+  }
+  renderSummary();
+}
+
+function renderRecentFixations() {
+  let container = document.querySelector('#recentFixations');
+  if (!container) {
+    container = document.createElement('div');
+    container.id = 'recentFixations';
+    container.className = 'recent-list';
+    fixationStatus.before(container);
+  }
+
+  if (state.mode === 'online' || state.recentFixations.length === 0) {
+    container.innerHTML = '';
+    return;
+  }
+
+  container.innerHTML = '<h3>Последние фиксации</h3>';
+  state.recentFixations.forEach((record) => {
+    const data = record.data || {};
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'secondary-btn recent-btn';
+    button.textContent = `${data.date || ''} - ${data.shop || ''}`;
+    button.addEventListener('click', () => {
+      selectRegionShopByNames(data.region, data.shop);
+      fixationForm.date.value = data.date || todayRu();
+      fixationForm.editFixationId.value = record.fixationId || '';
+      fixationForm.editOriginalRegion.value = data.region || '';
+      state.photos = [];
+      state.events = Array.isArray(data.events) && data.events.length ? data.events : [];
+      if (state.events.length === 0) {
+        addEvent();
+      } else {
+        renderEvents();
+      }
+      renderPhotos();
+      setRecordMode('edit');
+      activatePanel('fixation');
+      setStatus(fixationStatus, 'Загрузите фото заново и сохраните изменение.', '');
+    });
+    container.append(button);
+  });
+}
+
+async function loadRecentFixations() {
+  const result = await fetchMiniAppJson('/api/miniapp/fixations/recent');
+  state.recentFixations = Array.isArray(result.fixations) ? result.fixations : [];
+  renderRecentFixations();
+}
+
 async function submitJson(url, payload) {
   return fetchMiniAppJson(url, {
     method: 'POST',
@@ -280,15 +420,17 @@ async function handleFixationSubmit(event) {
       shopId: fixationForm.shopId.value,
       date: fixationForm.date.value,
       events: state.events,
-      photos: state.photos
+      photos: state.photos,
+      onlineComment: fixationForm.onlineComment?.value || '',
+      editFixationId: fixationForm.editFixationId.value || '',
+      editOriginalRegion: fixationForm.editOriginalRegion.value || ''
     };
 
-    const result = await submitJson('/api/miniapp/fixations', payload);
+    const endpoint = state.mode === 'online' ? '/api/miniapp/online-thefts' : '/api/miniapp/fixations';
+    const result = await submitJson(endpoint, payload);
     setStatus(fixationStatus, `Сохранено. Строк: ${result.rows}, фото: ${result.photos}.`, 'success');
-    state.photos = [];
-    state.events = [];
-    addEvent();
-    renderPhotos();
+    resetRecordForm(state.mode === 'online' ? 'online' : 'fixation');
+    await loadRecentFixations();
   } catch (error) {
     setStatus(fixationStatus, error.message, 'error');
   } finally {
@@ -324,10 +466,10 @@ async function handleSimpleReportSubmit(event) {
 function initTabs() {
   document.querySelectorAll('.tab').forEach((button) => {
     button.addEventListener('click', () => {
-      document.querySelectorAll('.tab').forEach((tab) => tab.classList.remove('active'));
-      document.querySelectorAll('.panel').forEach((panel) => panel.classList.remove('active'));
-      button.classList.add('active');
-      document.getElementById(button.dataset.tab).classList.add('active');
+      if (button.dataset.tab === 'fixation' && state.mode === 'online') {
+        resetRecordForm('fixation');
+      }
+      activatePanel(button.dataset.tab);
     });
   });
 }
@@ -362,10 +504,19 @@ async function init() {
   renderPhotos();
   initTabs();
   initMenuReturn();
+  loadRecentFixations().catch(() => {});
 
   fixationForm.regionId.addEventListener('change', updateShopSelect);
   fixationForm.shopId.addEventListener('change', renderSummary);
   document.querySelector('#addEventBtn').addEventListener('click', () => addEvent());
+  startOnlineBtn?.addEventListener('click', () => {
+    resetRecordForm('online');
+    activatePanel('fixation');
+  });
+  cancelEditBtn?.addEventListener('click', () => {
+    resetRecordForm('fixation');
+    setStatus(fixationStatus, '', '');
+  });
   fixationForm.addEventListener('submit', handleFixationSubmit);
   document.querySelectorAll('.simple-form').forEach((form) => {
     form.addEventListener('submit', handleSimpleReportSubmit);

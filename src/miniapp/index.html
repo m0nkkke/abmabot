@@ -21,6 +21,7 @@
 
     <nav class="tabs" aria-label="Сценарии">
       <button class="tab active" data-tab="fixation">Фиксация</button>
+      <button class="tab" data-tab="online">Онлайн-кражи</button>
       <button class="tab" data-tab="report">Отчет</button>
       <button class="tab" data-tab="kso">КСО</button>
       <button class="tab" data-tab="tech">Тех. неполадка</button>
@@ -33,6 +34,9 @@
             <h2>Основные данные</h2>
           </div>
 
+          <input type="hidden" name="mode" value="fixation">
+          <input type="hidden" name="editFixationId">
+          <input type="hidden" name="editOriginalRegion">
           <label>
             <span>ФИО</span>
             <input name="fio" autocomplete="name" required>
@@ -52,6 +56,11 @@
           <label>
             <span>Дата</span>
             <input name="date" placeholder="ДД.ММ.ГГГГ" required>
+          </label>
+
+          <label class="online-comment-field hidden">
+            <span>Комментарий к онлайн-краже</span>
+            <textarea name="onlineComment" rows="4"></textarea>
           </label>
         </section>
 
@@ -79,10 +88,18 @@
         <aside class="summary">
           <h2>Сводка</h2>
           <div id="fixationSummary"></div>
+          <button class="secondary-btn hidden" type="button" id="cancelEditBtn">Отменить изменение</button>
           <button class="primary-btn" type="submit">Сохранить фиксацию</button>
           <p class="status" id="fixationStatus"></p>
         </aside>
       </form>
+    </section>
+
+    <section class="panel" id="online">
+      <div class="simple-form">
+        <h2>Онлайн-кражи</h2>
+        <button class="primary-btn" type="button" id="startOnlineBtn">Открыть форму онлайн-кражи</button>
+      </div>
     </section>
 
     <section class="panel" id="report">

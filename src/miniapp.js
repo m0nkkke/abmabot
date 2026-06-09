@@ -1,7 +1,11 @@
 const express = require('express');
 const { miniAppAuthMiddleware } = require('./services/miniAppAuthService');
 const { getMiniAppBootstrap, listRegions, listShops } = require('./services/catalogService');
-const { createFixation } = require('./services/fixationService');
+const {
+  createFixation,
+  createOnlineTheft,
+  listMiniAppRecentFixations
+} = require('./services/fixationService');
 const {
   createKsoReport,
   createTechReport,
@@ -38,7 +42,18 @@ router.get('/catalog/shops', (req, res) => {
   });
 });
 
+router.get('/fixations/recent', (req, res) => {
+  res.json({
+    ok: true,
+    fixations: listMiniAppRecentFixations(req.miniAppUserId || null, 5)
+  });
+});
+
 postAction('/fixations', (body, req) => createFixation({
+  ...body,
+  userId: req.miniAppUserId || body.userId
+}));
+postAction('/online-thefts', (body, req) => createOnlineTheft({
   ...body,
   userId: req.miniAppUserId || body.userId
 }));

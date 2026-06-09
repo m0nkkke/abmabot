@@ -131,6 +131,20 @@ describe('miniapp API smoke', () => {
     }
   });
 
+  test('serves recent fixations endpoint', async () => {
+    const server = createTestServer();
+
+    try {
+      const { response, body } = await requestJson(server.baseUrl, '/api/miniapp/fixations/recent');
+
+      assert.equal(response.status, 200);
+      assert.equal(body.ok, true);
+      assert.equal(Array.isArray(body.fixations), true);
+    } finally {
+      await server.close();
+    }
+  });
+
   test('requires token when auth is enabled', async () => {
     process.env.MINIAPP_AUTH_REQUIRED = 'true';
     const server = createTestServer();
@@ -235,6 +249,37 @@ describe('miniapp API smoke', () => {
       assert.equal(response.status, 400);
       assert.equal(body.ok, false);
       assert.match(body.error, /ФИО|дату|текст/i);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('validates online theft payload without writing to sheets', async () => {
+    const server = createTestServer();
+
+    try {
+      const bootstrap = await requestJson(server.baseUrl, '/api/miniapp/bootstrap');
+      const shop = bootstrap.body.regions[0].shops[0];
+      const { response, body } = await requestJson(server.baseUrl, '/api/miniapp/online-thefts', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          fio: 'Smoke User',
+          shopId: shop.id,
+          date: '09.06.2026',
+          events: [{
+            item: 'Item',
+            eventType: bootstrap.body.eventTypes.THEFT,
+            amount: '100'
+          }]
+        })
+      });
+
+      assert.equal(response.status, 400);
+      assert.equal(body.ok, false);
+      assert.match(body.error, /комментарий|фото/i);
     } finally {
       await server.close();
     }
