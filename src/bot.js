@@ -1,5 +1,5 @@
 const { STATES } = require('./states');
-const { EVENT_TYPES, VIOLATION_TYPES } = require('./constants');
+const { EVENT_TYPES, MAX_PHOTOS_PER_RECORD, VIOLATION_TYPES } = require('./constants');
 const {
     grantAccessByPassword,
     hasConfiguredPasswords,
