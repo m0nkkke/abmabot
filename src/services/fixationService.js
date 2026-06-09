@@ -158,7 +158,7 @@ function buildRecentFixationData({ shop, date, events }) {
     region: shop.region || '',
     shop: shop.name || '',
     date: date || '',
-    item: '',
+    item: events[0]?.item || '',
     events: events.map((event) => ({
       item: event.item || '',
       eventType: event.eventType,

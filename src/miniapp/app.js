@@ -235,6 +235,26 @@ async function fileToDataUrl(file) {
   return canvas.toDataURL('image/jpeg', 0.78);
 }
 
+async function addPhotoFiles(files) {
+  const availableSlots = state.config.maxPhotos - state.photos.length;
+  const imageFiles = [...files].filter((file) => file.type?.startsWith('image/')).slice(0, availableSlots);
+
+  if (imageFiles.length === 0) {
+    if (availableSlots <= 0) {
+      setStatus(fixationStatus, 'Достигнут лимит фото для одной фиксации.', 'error');
+    }
+    return;
+  }
+
+  for (const file of imageFiles) {
+    state.photos.push(await fileToDataUrl(file));
+  }
+
+  renderPhotos();
+  renderSummary();
+  setStatus(fixationStatus, imageFiles.length === 1 ? 'Фото добавлено.' : `Фото добавлены: ${imageFiles.length}.`, '');
+}
+
 function renderPhotos() {
   photoGrid.innerHTML = '';
   photoCounter.textContent = `${state.photos.length}/${state.config.maxPhotos}`;
@@ -369,10 +389,11 @@ function renderRecentFixations() {
   container.innerHTML = '<h3>Последние фиксации</h3>';
   state.recentFixations.forEach((record) => {
     const data = record.data || {};
+    const item = data.item || data.events?.find((event) => event.item)?.item || '';
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'secondary-btn recent-btn';
-    button.textContent = `${data.date || ''} - ${data.shop || ''}`;
+    button.textContent = [data.date, data.shop, item].filter(Boolean).join(' - ');
     button.addEventListener('click', () => {
       selectRegionShopByNames(data.region, data.shop);
       fixationForm.date.value = data.date || todayRu();
@@ -428,7 +449,7 @@ async function handleFixationSubmit(event) {
 
     const endpoint = state.mode === 'online' ? '/api/miniapp/online-thefts' : '/api/miniapp/fixations';
     const result = await submitJson(endpoint, payload);
-    setStatus(fixationStatus, `Сохранено. Строк: ${result.rows}, фото: ${result.photos}.`, 'success');
+    setStatus(fixationStatus, `Готово. Фиксация сохранена: строк ${result.rows}, фото ${result.photos}.`, 'success');
     resetRecordForm(state.mode === 'online' ? 'online' : 'fixation');
     await loadRecentFixations();
   } catch (error) {
@@ -523,13 +544,25 @@ async function init() {
   });
 
   photoInput.addEventListener('change', async () => {
-    const files = [...photoInput.files].slice(0, state.config.maxPhotos - state.photos.length);
-    for (const file of files) {
-      state.photos.push(await fileToDataUrl(file));
-    }
+    await addPhotoFiles(photoInput.files);
     photoInput.value = '';
-    renderPhotos();
-    renderSummary();
+  });
+
+  document.addEventListener('paste', async (event) => {
+    const files = [
+      ...(event.clipboardData?.files || []),
+      ...(event.clipboardData?.items || [])
+        .filter((item) => item.type?.startsWith('image/'))
+        .map((item) => item.getAsFile())
+        .filter(Boolean)
+    ].filter((file) => file.type?.startsWith('image/'));
+
+    if (files.length === 0) {
+      return;
+    }
+
+    event.preventDefault();
+    await addPhotoFiles(files);
   });
 }
 
