@@ -11,6 +11,7 @@ const state = {
 const fixationForm = document.querySelector('#fixationForm');
 const eventsList = document.querySelector('#eventsList');
 const eventTemplate = document.querySelector('#eventTemplate');
+const photoDrop = document.querySelector('#photoDrop');
 const photoInput = document.querySelector('#photoInput');
 const photoGrid = document.querySelector('#photoGrid');
 const photoCounter = document.querySelector('#photoCounter');
@@ -255,6 +256,44 @@ async function addPhotoFiles(files) {
   setStatus(fixationStatus, imageFiles.length === 1 ? 'Фото добавлено.' : `Фото добавлены: ${imageFiles.length}.`, '');
 }
 
+function getImageFilesFromPaste(event) {
+  return [
+    ...(event.clipboardData?.files || []),
+    ...(event.clipboardData?.items || [])
+      .filter((item) => item.type?.startsWith('image/'))
+      .map((item) => item.getAsFile())
+      .filter(Boolean)
+  ].filter((file) => file.type?.startsWith('image/'));
+}
+
+async function addPhotosFromClipboardApi() {
+  if (!navigator.clipboard?.read) {
+    return false;
+  }
+
+  try {
+    const clipboardItems = await navigator.clipboard.read();
+    const files = [];
+
+    for (const item of clipboardItems) {
+      const imageType = item.types.find((type) => type.startsWith('image/'));
+      if (imageType) {
+        const blob = await item.getType(imageType);
+        files.push(new File([blob], `clipboard-${Date.now()}.png`, { type: imageType }));
+      }
+    }
+
+    if (files.length === 0) {
+      return false;
+    }
+
+    await addPhotoFiles(files);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
 function renderPhotos() {
   photoGrid.innerHTML = '';
   photoCounter.textContent = `${state.photos.length}/${state.config.maxPhotos}`;
@@ -390,9 +429,11 @@ function renderRecentFixations() {
   state.recentFixations.forEach((record) => {
     const data = record.data || {};
     const item = data.item || data.events?.find((event) => event.item)?.item || '';
+    const isSelected = fixationForm.editFixationId.value && fixationForm.editFixationId.value === record.fixationId;
     const button = document.createElement('button');
     button.type = 'button';
-    button.className = 'secondary-btn recent-btn';
+    button.className = `secondary-btn recent-btn${isSelected ? ' selected' : ''}`;
+    button.setAttribute('aria-pressed', isSelected ? 'true' : 'false');
     button.textContent = [data.date, data.shop, item].filter(Boolean).join(' - ');
     button.addEventListener('click', () => {
       selectRegionShopByNames(data.region, data.shop);
@@ -408,6 +449,7 @@ function renderRecentFixations() {
       }
       renderPhotos();
       setRecordMode('edit');
+      renderRecentFixations();
       activatePanel('fixation');
       setStatus(fixationStatus, 'Загрузите фото заново и сохраните изменение.', '');
     });
@@ -548,21 +590,43 @@ async function init() {
     photoInput.value = '';
   });
 
-  document.addEventListener('paste', async (event) => {
-    const files = [
-      ...(event.clipboardData?.files || []),
-      ...(event.clipboardData?.items || [])
-        .filter((item) => item.type?.startsWith('image/'))
-        .map((item) => item.getAsFile())
-        .filter(Boolean)
-    ].filter((file) => file.type?.startsWith('image/'));
+  photoDrop?.addEventListener('click', (event) => {
+    if (event.target === photoInput) {
+      return;
+    }
+    photoInput.click();
+  });
 
+  photoDrop?.addEventListener('keydown', (event) => {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      photoInput.click();
+    }
+  });
+
+  document.addEventListener('paste', async (event) => {
+    const files = getImageFilesFromPaste(event);
     if (files.length === 0) {
       return;
     }
 
     event.preventDefault();
     await addPhotoFiles(files);
+  });
+
+  document.addEventListener('keydown', async (event) => {
+    if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'v') {
+      return;
+    }
+
+    const activeTag = document.activeElement?.tagName;
+    if (activeTag === 'INPUT' || activeTag === 'TEXTAREA' || document.activeElement?.isContentEditable) {
+      return;
+    }
+
+    if (await addPhotosFromClipboardApi()) {
+      event.preventDefault();
+    }
   });
 }
 

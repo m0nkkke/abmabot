@@ -252,6 +252,11 @@ textarea:focus {
   cursor: pointer;
 }
 
+.photo-drop:focus-visible {
+  outline: 3px solid rgba(32, 143, 99, 0.28);
+  outline-offset: 2px;
+}
+
 .photo-drop input {
   display: none;
 }
@@ -346,6 +351,13 @@ textarea:focus {
   white-space: normal;
   line-height: 1.35;
   text-align: left;
+}
+
+.recent-btn.selected {
+  border-color: var(--accent);
+  background: rgba(32, 143, 99, 0.12);
+  box-shadow: inset 3px 0 0 var(--accent);
+  color: var(--accent-strong);
 }
 
 .primary-btn:disabled {
