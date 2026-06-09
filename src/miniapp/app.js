@@ -279,6 +279,19 @@ async function addPhotoSource(src) {
   return true;
 }
 
+function waitForImageLoad(image) {
+  if (image.complete && (image.currentSrc || image.src)) {
+    return Promise.resolve();
+  }
+
+  return new Promise((resolve) => {
+    const finish = () => resolve();
+    image.addEventListener('load', finish, { once: true });
+    image.addEventListener('error', finish, { once: true });
+    setTimeout(finish, 500);
+  });
+}
+
 async function captureInsertedPhotosFromDrop() {
   const images = [...(photoDrop?.querySelectorAll('img') || [])];
   if (images.length === 0) {
@@ -287,7 +300,8 @@ async function captureInsertedPhotosFromDrop() {
 
   let added = 0;
   for (const image of images) {
-    if (await addPhotoSource(image.src)) {
+    await waitForImageLoad(image);
+    if (await addPhotoSource(image.currentSrc || image.src)) {
       added++;
     }
   }
@@ -303,6 +317,44 @@ async function captureInsertedPhotosFromDrop() {
 
   setStatus(fixationStatus, 'Достигнут лимит фото для одной фиксации.', 'error');
   return false;
+}
+
+function scheduleDropPhotoCapture({ showError = false } = {}) {
+  if (photoDrop?.dataset.capturing === 'true') {
+    return;
+  }
+
+  if (photoDrop) {
+    photoDrop.dataset.capturing = 'true';
+  }
+
+  const delays = [0, 50, 150, 350, 700];
+  let resolved = false;
+
+  delays.forEach((delay, index) => {
+    setTimeout(async () => {
+      if (resolved) {
+        return;
+      }
+
+      if (await captureInsertedPhotosFromDrop()) {
+        resolved = true;
+        if (photoDrop) {
+          delete photoDrop.dataset.capturing;
+        }
+        return;
+      }
+
+      if (showError && index === delays.length - 1) {
+        renderPhotoDropHint();
+        setStatus(fixationStatus, 'В буфере не найдено изображение.', 'error');
+      }
+
+      if (index === delays.length - 1 && photoDrop) {
+        delete photoDrop.dataset.capturing;
+      }
+    }, delay);
+  });
 }
 
 function getImageFilesFromPaste(event) {
@@ -651,16 +703,22 @@ async function init() {
     }
   });
 
+  photoDrop?.addEventListener('input', () => {
+    scheduleDropPhotoCapture();
+  });
+
+  if (photoDrop) {
+    const observer = new MutationObserver(() => {
+      scheduleDropPhotoCapture();
+    });
+    observer.observe(photoDrop, { childList: true, subtree: true, attributes: true, attributeFilter: ['src'] });
+  }
+
   document.addEventListener('paste', async (event) => {
     const files = getImageFilesFromPaste(event);
     if (files.length === 0) {
       if (photoDrop?.contains(event.target)) {
-        setTimeout(async () => {
-          if (!(await captureInsertedPhotosFromDrop())) {
-            renderPhotoDropHint();
-            setStatus(fixationStatus, 'В буфере не найдено изображение.', 'error');
-          }
-        }, 0);
+        scheduleDropPhotoCapture({ showError: true });
       }
       return;
     }
