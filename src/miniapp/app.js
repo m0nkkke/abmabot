@@ -485,12 +485,37 @@ function renderSummary() {
 }
 
 function activatePanel(panelId) {
+  const panel = document.getElementById(panelId);
+  if (panel?.dataset.adminOnly === 'true' && !isCurrentUserAdmin()) {
+    panelId = 'fixation';
+  }
+
   document.querySelectorAll('.tab').forEach((tab) => {
     tab.classList.toggle('active', tab.dataset.tab === panelId);
   });
   document.querySelectorAll('.panel').forEach((panel) => {
     panel.classList.toggle('active', panel.id === panelId);
   });
+}
+
+function isCurrentUserAdmin() {
+  return state.config?.user?.isAdmin === true || state.config?.user?.role === 'admin';
+}
+
+function applyAdminOnlyVisibility() {
+  if (isCurrentUserAdmin()) {
+    return;
+  }
+
+  document.querySelectorAll('[data-admin-only="true"]').forEach((element) => {
+    element.classList.add('hidden');
+    element.setAttribute('aria-hidden', 'true');
+  });
+
+  const activePanel = document.querySelector('.panel.active');
+  if (activePanel?.dataset.adminOnly === 'true') {
+    activatePanel('fixation');
+  }
 }
 
 function setRecordMode(mode) {
@@ -884,6 +909,11 @@ async function handleKsoDecisionPreviewSubmit(event) {
 function initTabs() {
   document.querySelectorAll('.tab').forEach((button) => {
     button.addEventListener('click', () => {
+      if (button.dataset.adminOnly === 'true' && !isCurrentUserAdmin()) {
+        activatePanel('fixation');
+        return;
+      }
+
       if (button.dataset.tab === 'fixation' && state.mode === 'online') {
         resetRecordForm('fixation');
       }
@@ -909,6 +939,7 @@ async function init() {
   initAuthToken();
   state.config = await fetchMiniAppJson('/api/miniapp/bootstrap');
   state.profile = state.config.user?.profile || null;
+  applyAdminOnlyVisibility();
 
   fillSelect(fixationForm.regionId, state.config.regions, (region) => region.id, (region) => region.name);
   updateShopSelect();
@@ -927,7 +958,9 @@ async function init() {
   initTabs();
   initMenuReturn();
   loadRecentFixations().catch(() => {});
-  loadKsoDecisionModel().catch(() => {});
+  if (isCurrentUserAdmin()) {
+    loadKsoDecisionModel().catch(() => {});
+  }
 
   fixationForm.regionId.addEventListener('change', () => {
     updateShopSelect();

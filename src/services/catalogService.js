@@ -1,6 +1,11 @@
-const { EVENT_TYPES, MAX_PHOTOS_PER_RECORD, VIOLATION_TYPES } = require('../constants');
-const { getProfile } = require('../db');
+const { EVENT_TYPES, MAX_PHOTOS_PER_RECORD, ROLES, VIOLATION_TYPES } = require('../constants');
+const { getProfile, getUserRole } = require('../db');
 const { getRegions, getShops, getShopsByRegion } = require('../shops');
+
+const ADMIN_USER_IDS = (process.env.ADMIN_USER_IDS || '')
+  .split(',')
+  .map((userId) => userId.trim())
+  .filter(Boolean);
 
 function formatShop(shop) {
   return {
@@ -47,6 +52,9 @@ function getMiniAppBootstrap(userId = null) {
     shops: listShops(region.id)
   }));
   const profile = userId ? getProfile(userId) : null;
+  const role = userId && ADMIN_USER_IDS.includes(String(userId))
+    ? ROLES.ADMIN
+    : userId ? getUserRole(userId) : null;
 
   return {
     regions,
@@ -55,6 +63,8 @@ function getMiniAppBootstrap(userId = null) {
     maxPhotos: MAX_PHOTOS_PER_RECORD,
     user: {
       userId: userId ? String(userId) : null,
+      role,
+      isAdmin: role === ROLES.ADMIN,
       profile: findProfileSelection(profile, regions)
     }
   };
