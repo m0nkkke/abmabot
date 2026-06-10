@@ -4,9 +4,11 @@ const { MAX_PHOTOS_PER_RECORD } = require('./constants');
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const REPORTS_SHEET_ID = process.env.GOOGLE_REPORTS_SHEET_ID || process.env.GOOGLE_REPORT_SHEET_ID || '';
 const TECH_REPORTS_SHEET_ID = process.env.GOOGLE_TECH_REPORTS_SHEET_ID || '';
+const BONUS_SHEET_ID = process.env.GOOGLE_BONUS_SHEET_ID || SHEET_ID;
 const KSO_ASSIGNMENT_SHEET_ID = process.env.GOOGLE_KSO_ASSIGNMENT_SHEET_ID || SHEET_ID;
 const CREDENTIALS_PATH = process.env.GOOGLE_CREDENTIALS_PATH || './credentials/service-account.json';
 const DATA_SHEET_NAME = 'Данные';
+const BONUS_SHEET_NAME = process.env.GOOGLE_BONUS_SHEET_NAME || 'Премии [данные]';
 const ONLINE_THEFT_SHEET_NAME = process.env.GOOGLE_ONLINE_THEFT_SHEET_NAME || 'Онлайн кражи';
 const REPORTS_SHEET_NAME = process.env.GOOGLE_REPORTS_SHEET_NAME || 'Отчеты';
 const ANONYMOUS_FEEDBACK_SHEET_NAME = process.env.GOOGLE_ANONYMOUS_FEEDBACK_SHEET_NAME || 'Анонимные обращения';
@@ -1224,6 +1226,28 @@ async function appendTechReportRow(row) {
   }
 }
 
+async function getBonusSheetRows() {
+  if (!BONUS_SHEET_ID) {
+    throw new Error('Не задана переменная окружения GOOGLE_BONUS_SHEET_ID или GOOGLE_SHEET_ID');
+  }
+
+  const sheets = getSheetsClient();
+  const response = await withTimeout(
+    sheets.spreadsheets.values.get({
+      spreadsheetId: BONUS_SHEET_ID,
+      range: `'${escapeSheetName(BONUS_SHEET_NAME)}'!A:G`,
+      majorDimension: 'ROWS',
+      valueRenderOption: 'FORMATTED_VALUE',
+      dateTimeRenderOption: 'FORMATTED_STRING'
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `чтение листа ${BONUS_SHEET_NAME}`
+  );
+
+  return response.data.values || [];
+}
+
 const KSO_EMPLOYEES_SHEET_NAME = 'Сотрудники';
 const KSO_SCHEDULE_SHEET_NAME = 'График';
 const KSO_SHOPS_SHEET_NAME = 'Магазины';
@@ -1874,6 +1898,7 @@ module.exports = {
   appendAnonymousFeedbackRow,
   appendKsoReportRow,
   appendTechReportRow,
+  getBonusSheetRows,
   getKsoAssignmentSheetData,
   initializeKsoAssignmentSheet,
   writeKsoAssignmentResult,

@@ -21,6 +21,7 @@
 
     <nav class="tabs" aria-label="Сценарии">
       <button class="tab active" data-tab="fixation">Фиксация</button>
+      <button class="tab" data-tab="bonuses">Премии</button>
       <button class="tab" data-tab="online">Онлайн-кражи</button>
       <button class="tab" data-tab="report">Отчет</button>
       <button class="tab" data-tab="kso">Отписка КСО</button>
@@ -102,6 +103,25 @@
       <div class="simple-form">
         <h2>Онлайн-кражи</h2>
         <button class="primary-btn" type="button" id="startOnlineBtn">Открыть форму онлайн-кражи</button>
+      </div>
+    </section>
+
+    <section class="panel" id="bonuses">
+      <div class="simple-form bonus-panel">
+        <div class="section-title">
+          <h2>Премии</h2>
+          <button class="secondary-btn" type="button" id="bonusRefreshBtn">Обновить</button>
+        </div>
+        <label>
+          <span>Премия за месяц</span>
+          <select id="bonusMonthSelect"></select>
+        </label>
+        <section class="bonus-total" id="bonusTotal">
+          <span>Премия за месяц</span>
+          <strong>0.00</strong>
+        </section>
+        <div class="bonus-list" id="bonusList"></div>
+        <p class="status" id="bonusStatus"></p>
       </div>
     </section>
 

@@ -5,7 +5,9 @@ const state = {
   photos: [],
   events: [],
   mode: 'fixation',
-  recentFixations: []
+  recentFixations: [],
+  shopSelectionTouched: false,
+  bonusLoaded: false
 };
 
 const LAST_SELECTION_KEY = 'miniappLastSelection';
@@ -29,6 +31,11 @@ const ksoDecisionModel = document.querySelector('#ksoDecisionModel');
 const ksoDecisionStatus = document.querySelector('#ksoDecisionStatus');
 const ksoDecisionPreviewForm = document.querySelector('#ksoDecisionPreviewForm');
 const ksoDecisionPreview = document.querySelector('#ksoDecisionPreview');
+const bonusMonthSelect = document.querySelector('#bonusMonthSelect');
+const bonusRefreshBtn = document.querySelector('#bonusRefreshBtn');
+const bonusTotal = document.querySelector('#bonusTotal');
+const bonusList = document.querySelector('#bonusList');
+const bonusStatus = document.querySelector('#bonusStatus');
 
 function todayInputDate() {
   const now = new Date();
@@ -60,8 +67,22 @@ function ruDateToInput(value) {
 }
 
 function setStatus(element, text, type = '') {
+  if (!element) {
+    return;
+  }
+
   element.textContent = text;
   element.className = `status ${type}`.trim();
+}
+
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[char]);
 }
 
 function initAuthToken() {
@@ -616,6 +637,25 @@ function selectRegionShopByNames(regionName, shopName) {
   renderSummary();
 }
 
+function applyLatestFixationShopDefault() {
+  if (state.shopSelectionTouched || state.mode !== 'fixation' || fixationForm.editFixationId.value) {
+    return;
+  }
+
+  const latest = state.recentFixations[0]?.data || {};
+  if (!latest.region || !latest.shop) {
+    return;
+  }
+
+  const region = findRegionByName(latest.region);
+  const shop = region?.shops?.find((item) => item.name === latest.shop);
+  if (!shop) {
+    return;
+  }
+
+  selectRegionShopByNames(latest.region, latest.shop);
+}
+
 function renderRecentFixations() {
   let container = document.querySelector('#recentFixations');
   if (!container) {
@@ -665,6 +705,7 @@ function renderRecentFixations() {
 async function loadRecentFixations() {
   const result = await fetchMiniAppJson('/api/miniapp/fixations/recent');
   state.recentFixations = Array.isArray(result.fixations) ? result.fixations : [];
+  applyLatestFixationShopDefault();
   renderRecentFixations();
 }
 
@@ -928,6 +969,96 @@ async function handleKsoDecisionPreviewSubmit(event) {
   }
 }
 
+function formatMoney(value) {
+  const number = Number(value) || 0;
+  return number.toLocaleString('ru-RU', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
+}
+
+function renderBonusSummary(bonus) {
+  if (!bonusMonthSelect || !bonusTotal || !bonusList) {
+    return;
+  }
+
+  const months = Array.isArray(bonus?.months) ? bonus.months : [];
+  bonusMonthSelect.innerHTML = '';
+  months.forEach((month) => {
+    const option = document.createElement('option');
+    option.value = month.value;
+    option.textContent = month.label;
+    option.selected = month.value === bonus.selectedMonth;
+    bonusMonthSelect.append(option);
+  });
+  bonusMonthSelect.disabled = months.length === 0;
+
+  const monthLabel = bonus?.selectedMonthLabel || 'выбранный месяц';
+  bonusTotal.innerHTML = `
+    <span>Премия за ${escapeHtml(monthLabel)}</span>
+    <strong>${formatMoney(bonus?.totalBonus)} ₽</strong>
+    <small>${Number(bonus?.rowsInMonth) || 0} фиксаций в месяце</small>
+  `;
+
+  const rows = Array.isArray(bonus?.recentFixations) ? bonus.recentFixations : [];
+  if (rows.length === 0) {
+    bonusList.innerHTML = '<section class="bonus-empty">Пока нет фиксаций для расчета премии.</section>';
+    return;
+  }
+
+  bonusList.innerHTML = `
+    <h3>Последние 10 фиксаций</h3>
+    <div class="bonus-table" role="table" aria-label="Последние фиксации для премии">
+      <div class="bonus-row bonus-head" role="row">
+        <span role="columnheader">Дата</span>
+        <span role="columnheader">Тип</span>
+        <span role="columnheader">Сумма</span>
+        <span role="columnheader">Премия</span>
+      </div>
+      ${rows.map((row) => `
+        <div class="bonus-row" role="row">
+          <span role="cell">
+            <strong>${escapeHtml(row.date || '-')}</strong>
+            <small>${escapeHtml(row.fixationId || '')}</small>
+          </span>
+          <span role="cell">${escapeHtml(row.type || '-')}</span>
+          <span role="cell">${formatMoney(row.amount)}</span>
+          <span role="cell"><strong>${formatMoney(row.bonus)} ₽</strong></span>
+        </div>
+      `).join('')}
+    </div>
+  `;
+}
+
+async function loadBonusSummary(month = bonusMonthSelect?.value || '') {
+  if (!bonusMonthSelect || !bonusTotal || !bonusList) {
+    return;
+  }
+
+  setStatus(bonusStatus, 'Загружаю премии...', '');
+  if (bonusRefreshBtn) {
+    bonusRefreshBtn.disabled = true;
+  }
+
+  try {
+    const params = new URLSearchParams();
+    if (month) {
+      params.set('month', month);
+    }
+    const suffix = params.toString() ? `?${params.toString()}` : '';
+    const result = await fetchMiniAppJson(`/api/miniapp/bonuses${suffix}`);
+    renderBonusSummary(result.bonus);
+    state.bonusLoaded = true;
+    setStatus(bonusStatus, '', '');
+  } catch (error) {
+    setStatus(bonusStatus, error.message, 'error');
+  } finally {
+    if (bonusRefreshBtn) {
+      bonusRefreshBtn.disabled = false;
+    }
+  }
+}
+
 function initTabs() {
   document.querySelectorAll('.tab').forEach((button) => {
     button.addEventListener('click', () => {
@@ -940,6 +1071,9 @@ function initTabs() {
         resetRecordForm('fixation');
       }
       activatePanel(button.dataset.tab);
+      if (button.dataset.tab === 'bonuses' && !state.bonusLoaded) {
+        loadBonusSummary().catch(() => {});
+      }
     });
   });
 }
@@ -985,10 +1119,12 @@ async function init() {
   }
 
   fixationForm.regionId.addEventListener('change', () => {
+    state.shopSelectionTouched = true;
     updateShopSelect();
     saveLastSelection();
   });
   fixationForm.shopId.addEventListener('change', () => {
+    state.shopSelectionTouched = true;
     saveLastSelection();
     renderSummary();
   });
@@ -1020,6 +1156,13 @@ async function init() {
   });
   ksoScheduleForm?.addEventListener('submit', handleKsoScheduleSubmit);
   ksoDecisionPreviewForm?.addEventListener('submit', handleKsoDecisionPreviewSubmit);
+  bonusMonthSelect?.addEventListener('change', () => {
+    loadBonusSummary(bonusMonthSelect.value).catch(() => {});
+  });
+  bonusRefreshBtn?.addEventListener('click', () => {
+    state.bonusLoaded = false;
+    loadBonusSummary(bonusMonthSelect?.value || '').catch(() => {});
+  });
 
   photoDrop?.addEventListener('click', (event) => {
     event.currentTarget.focus();

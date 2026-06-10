@@ -1,6 +1,7 @@
 const express = require('express');
 const { miniAppAuthMiddleware } = require('./services/miniAppAuthService');
 const { getMiniAppBootstrap, listRegions, listShops } = require('./services/catalogService');
+const { getMiniAppBonusSummary } = require('./services/bonusService');
 const {
   createFixation,
   createOnlineTheft,
@@ -55,6 +56,17 @@ router.get('/fixations/recent', (req, res) => {
     ok: true,
     fixations: listMiniAppRecentFixations(req.miniAppUserId || null, 5)
   });
+});
+
+router.get('/bonuses', async (req, res, next) => {
+  try {
+    res.json({
+      ok: true,
+      bonus: await getMiniAppBonusSummary(req.miniAppUserId || null, req.query.month || '')
+    });
+  } catch (error) {
+    next(error);
+  }
 });
 
 router.get('/kso-decision/model', (req, res) => {

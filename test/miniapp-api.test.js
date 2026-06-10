@@ -4,6 +4,7 @@ const { after, beforeEach, describe, test } = require('node:test');
 const express = require('express');
 const { miniAppApiRouter } = require('../src/miniapp');
 const { saveEmployee } = require('../src/db');
+const { buildBonusSummary } = require('../src/services/bonusService');
 const { createMiniAppLogin, validateMaxWebAppInitData } = require('../src/services/miniAppAuthService');
 
 const originalMiniAppAuthRequired = process.env.MINIAPP_AUTH_REQUIRED;
@@ -149,6 +150,39 @@ describe('miniapp API smoke', () => {
       assert.equal(response.status, 200);
       assert.equal(body.ok, true);
       assert.equal(Array.isArray(body.fixations), true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('builds employee bonus summary by selected month', () => {
+    const rows = [
+      ['Месяц', 'Дата', 'ФИО', 'Тип', 'Сумма', 'ID_Фиксации', 'Премия'],
+      ['06.2026', '01.06.2026', 'Иванов Иван', 'Кража', '1 000,50', 'fix-1', '100,50'],
+      ['06.2026', '15.06.2026', 'Иванов Иван', 'Упущенная кража', '500', 'fix-2', '50'],
+      ['06.2026', '20.06.2026', 'Петров Петр', 'Кража', '900', 'fix-3', '90'],
+      ['05.2026', '31.05.2026', 'Иванов Иван', 'Нарушение', '700', 'fix-4', '70']
+    ];
+
+    const bonus = buildBonusSummary(rows, 'Иванов Иван', '2026-06');
+
+    assert.equal(bonus.selectedMonth, '2026-06');
+    assert.equal(bonus.totalBonus, 150.5);
+    assert.equal(bonus.rowsInMonth, 2);
+    assert.equal(bonus.recentFixations.length, 3);
+    assert.equal(bonus.recentFixations[0].fixationId, 'fix-2');
+    assert.deepEqual(bonus.months.map((month) => month.value), ['2026-06', '2026-05']);
+  });
+
+  test('bonus endpoint requires known employee fio before reading sheets', async () => {
+    const server = createTestServer();
+
+    try {
+      const { response, body } = await requestJson(server.baseUrl, '/api/miniapp/bonuses');
+
+      assert.equal(response.status, 400);
+      assert.equal(body.ok, false);
+      assert.match(body.error, /ФИО/i);
     } finally {
       await server.close();
     }
