@@ -9,6 +9,7 @@ const CREDENTIALS_PATH = process.env.GOOGLE_CREDENTIALS_PATH || './credentials/s
 const DATA_SHEET_NAME = 'Данные';
 const ONLINE_THEFT_SHEET_NAME = process.env.GOOGLE_ONLINE_THEFT_SHEET_NAME || 'Онлайн кражи';
 const REPORTS_SHEET_NAME = process.env.GOOGLE_REPORTS_SHEET_NAME || 'Отчеты';
+const ANONYMOUS_FEEDBACK_SHEET_NAME = process.env.GOOGLE_ANONYMOUS_FEEDBACK_SHEET_NAME || 'Анонимные обращения';
 const KSO_SHEET_NAME = process.env.GOOGLE_KSO_SHEET_NAME || 'Отписки КСО';
 const TECH_REPORTS_SHEET_NAME = process.env.GOOGLE_TECH_REPORTS_SHEET_NAME || 'Тех. неполадки';
 const BASE_HEADERS = [
@@ -304,9 +305,9 @@ async function ensureOnlineTheftSheet(sheets) {
   );
 }
 
-async function ensureTextReportSheet(sheets) {
+async function ensureTextReportSheet(sheets, sheetName = REPORTS_SHEET_NAME) {
   const spreadsheetId = getReportsSheetId();
-  log('Google Sheets: проверяем лист текстовых отчетов.', { sheet: REPORTS_SHEET_NAME });
+  log('Google Sheets: проверяем лист текстовых отчетов.', { sheet: sheetName });
 
   const spreadsheet = await withTimeout(
     sheets.spreadsheets.get({
@@ -318,7 +319,7 @@ async function ensureTextReportSheet(sheets) {
   );
 
   const existingSheet = spreadsheet.data.sheets.find((sheet) => {
-    return sheet.properties && sheet.properties.title === REPORTS_SHEET_NAME;
+    return sheet.properties && sheet.properties.title === sheetName;
   });
 
   if (!existingSheet) {
@@ -330,7 +331,7 @@ async function ensureTextReportSheet(sheets) {
             {
               addSheet: {
                 properties: {
-                  title: REPORTS_SHEET_NAME
+                  title: sheetName
                 }
               }
             }
@@ -343,12 +344,12 @@ async function ensureTextReportSheet(sheets) {
     );
   }
 
-  await ensureTextReportGridSize(sheets, 1, REPORT_HEADERS.length);
+  await ensureTextReportGridSize(sheets, 1, REPORT_HEADERS.length, sheetName);
 
   const headerResponse = await withTimeout(
     sheets.spreadsheets.values.get({
       spreadsheetId,
-      range: `'${escapeSheetName(REPORTS_SHEET_NAME)}'!${REPORT_HEADER_RANGE}`
+      range: `'${escapeSheetName(sheetName)}'!${REPORT_HEADER_RANGE}`
     }, {
       timeout: GOOGLE_REQUEST_TIMEOUT_MS
     }),
@@ -364,7 +365,7 @@ async function ensureTextReportSheet(sheets) {
   await withTimeout(
     sheets.spreadsheets.values.clear({
       spreadsheetId,
-      range: `'${escapeSheetName(REPORTS_SHEET_NAME)}'!${REPORT_HEADER_RANGE}`
+      range: `'${escapeSheetName(sheetName)}'!${REPORT_HEADER_RANGE}`
     }, {
       timeout: GOOGLE_REQUEST_TIMEOUT_MS
     }),
@@ -374,7 +375,7 @@ async function ensureTextReportSheet(sheets) {
   await withTimeout(
     sheets.spreadsheets.values.update({
       spreadsheetId,
-      range: `'${escapeSheetName(REPORTS_SHEET_NAME)}'!${REPORT_HEADER_RANGE}`,
+      range: `'${escapeSheetName(sheetName)}'!${REPORT_HEADER_RANGE}`,
       valueInputOption: 'USER_ENTERED',
       requestBody: {
         values: [REPORT_HEADERS]
@@ -630,7 +631,7 @@ async function ensureSheetGridSize(sheets, sheetName, minRows, minColumns = HEAD
   );
 }
 
-async function getTextReportSheetProperties(sheets) {
+async function getTextReportSheetProperties(sheets, sheetName = REPORTS_SHEET_NAME) {
   const spreadsheetId = getReportsSheetId();
   const spreadsheet = await withTimeout(
     sheets.spreadsheets.get({
@@ -639,23 +640,23 @@ async function getTextReportSheetProperties(sheets) {
     }, {
       timeout: GOOGLE_REQUEST_TIMEOUT_MS
     }),
-    `получение свойств листа ${REPORTS_SHEET_NAME}`
+    `получение свойств листа ${sheetName}`
   );
 
   const sheet = spreadsheet.data.sheets.find((item) => {
-    return item.properties && item.properties.title === REPORTS_SHEET_NAME;
+    return item.properties && item.properties.title === sheetName;
   });
 
   if (!sheet?.properties) {
-    throw new Error(`Лист ${REPORTS_SHEET_NAME} не найден`);
+    throw new Error(`Лист ${sheetName} не найден`);
   }
 
   return sheet.properties;
 }
 
-async function ensureTextReportGridSize(sheets, minRows, minColumns = REPORT_HEADERS.length) {
+async function ensureTextReportGridSize(sheets, minRows, minColumns = REPORT_HEADERS.length, sheetName = REPORTS_SHEET_NAME) {
   const spreadsheetId = getReportsSheetId();
-  const properties = await getTextReportSheetProperties(sheets);
+  const properties = await getTextReportSheetProperties(sheets, sheetName);
   const rowCount = properties.gridProperties?.rowCount || 0;
   const columnCount = properties.gridProperties?.columnCount || 0;
 
@@ -666,7 +667,7 @@ async function ensureTextReportGridSize(sheets, minRows, minColumns = REPORT_HEA
   const targetRows = rowCount >= minRows ? rowCount : minRows + MIN_EXTRA_ROWS;
   const targetColumns = columnCount >= minColumns ? columnCount : minColumns + MIN_EXTRA_COLUMNS;
   log('Google Sheets: расширяем лист отчетов перед записью.', {
-    sheetName: REPORTS_SHEET_NAME,
+    sheetName,
     currentRows: rowCount,
     currentColumns: columnCount,
     targetRows,
@@ -975,9 +976,9 @@ async function deleteRecordRows(sheets, sheetName, rowNumbers) {
   );
 }
 
-async function writeTextReportToNextFreeLine(sheets, row) {
+async function writeTextReportToNextFreeLine(sheets, row, sheetName = REPORTS_SHEET_NAME) {
   const spreadsheetId = getReportsSheetId();
-  const escapedSheetName = escapeSheetName(REPORTS_SHEET_NAME);
+  const escapedSheetName = escapeSheetName(sheetName);
   const valuesResponse = await withTimeout(
     sheets.spreadsheets.values.get({
       spreadsheetId,
@@ -986,13 +987,13 @@ async function writeTextReportToNextFreeLine(sheets, row) {
     }, {
       timeout: GOOGLE_REQUEST_TIMEOUT_MS
     }),
-    `поиск свободной строки на листе ${REPORTS_SHEET_NAME}`
+    `поиск свободной строки на листе ${sheetName}`
   );
 
   const nextRow = findNextDataRow(valuesResponse.data.values);
-  await ensureTextReportGridSize(sheets, nextRow, REPORT_HEADERS.length);
+  await ensureTextReportGridSize(sheets, nextRow, REPORT_HEADERS.length, sheetName);
   log('Google Sheets: записываем текстовый отчет в явный диапазон.', {
-    sheetName: REPORTS_SHEET_NAME,
+    sheetName,
     row: nextRow
   });
 
@@ -1007,7 +1008,7 @@ async function writeTextReportToNextFreeLine(sheets, row) {
     }, {
       timeout: GOOGLE_REQUEST_TIMEOUT_MS
     }),
-    `запись строки ${nextRow} на лист ${REPORTS_SHEET_NAME}`
+    `запись строки ${nextRow} на лист ${sheetName}`
   );
 }
 
@@ -1180,6 +1181,19 @@ async function appendTextReportRow(row) {
     log('Google Sheets: текстовый отчет успешно записан.', { sheet: REPORTS_SHEET_NAME });
   } catch (error) {
     logError('Ошибка записи текстового отчета в Google Sheets:', error);
+    throw error;
+  }
+}
+
+async function appendAnonymousFeedbackRow(row) {
+  try {
+    log('Google Sheets: начинаем запись анонимного обращения.', { sheet: ANONYMOUS_FEEDBACK_SHEET_NAME });
+    const sheets = getSheetsClient();
+    await ensureTextReportSheet(sheets, ANONYMOUS_FEEDBACK_SHEET_NAME);
+    await writeTextReportToNextFreeLine(sheets, row, ANONYMOUS_FEEDBACK_SHEET_NAME);
+    log('Google Sheets: анонимное обращение успешно записано.', { sheet: ANONYMOUS_FEEDBACK_SHEET_NAME });
+  } catch (error) {
+    logError('Ошибка записи анонимного обращения в Google Sheets:', error);
     throw error;
   }
 }
@@ -1803,6 +1817,7 @@ module.exports = {
   appendOnlineTheftRow,
   replaceFixationRows,
   appendTextReportRow,
+  appendAnonymousFeedbackRow,
   appendKsoReportRow,
   appendTechReportRow,
   getKsoAssignmentSheetData,

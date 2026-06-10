@@ -1,7 +1,7 @@
 const { getProfile, getSession, saveSession } = require('../db');
 const { STATES } = require('../states');
 const { todayMskPlus5 } = require('../validators');
-const { appendKsoReportRow } = require('../sheets');
+const { createKsoReport } = require('../services/reportService');
 const { inlineKeyboard } = require('../keyboards');
 const { logError } = require('../logger');
 const { sendMessage } = require('../maxClient');
@@ -9,8 +9,7 @@ const { sendKeyboardMessage } = require('../flows/keyboardSession');
 const { cleanupMessages, deleteCallbackMessage, sendCleanupMessage } = require('../flows/cleanupFlow');
 const {
   askKsoDate,
-  askKsoText,
-  buildKsoReportRow
+  askKsoText
 } = require('../flows/ksoFlow');
 
 function repeatOrMenuAttachments(repeatPayload, repeatText) {
@@ -51,7 +50,11 @@ async function handleKsoReportCallback(update, chatId, userId, session, payload,
 
     try {
       await sendCleanupMessage(chatId, userId, 'Сохраняю отписку КСО в Google Sheets, пожалуйста подождите...');
-      await appendKsoReportRow(buildKsoReportRow(profile, currentSession.data));
+      await createKsoReport({
+        fio: profile.fio,
+        date: currentSession.data.date,
+        text: currentSession.data.ksoText
+      });
       await cleanupMessages(userId);
       await deleteCallbackMessage(update);
       saveSession(userId, STATES.IDLE, {});

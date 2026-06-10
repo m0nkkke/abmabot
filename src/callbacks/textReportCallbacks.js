@@ -2,14 +2,13 @@ const { getProfile, getSession, saveSession } = require('../db');
 const { inlineKeyboard } = require('../keyboards');
 const { logError } = require('../logger');
 const { sendMessage } = require('../maxClient');
-const { appendTextReportRow } = require('../sheets');
+const { createTextReport } = require('../services/reportService');
 const { STATES } = require('../states');
 const { todayMskPlus5 } = require('../validators');
 const { cleanupMessages, deleteCallbackMessage, sendCleanupMessage } = require('../flows/cleanupFlow');
 const {
   askTextReportDate,
-  askTextReportText,
-  buildTextReportRow
+  askTextReportText
 } = require('../flows/textReportFlow');
 const { sendKeyboardMessage } = require('../flows/keyboardSession');
 
@@ -57,7 +56,11 @@ async function handleTextReportCallback(update, chatId, userId, session, payload
 
     try {
       await sendCleanupMessage(chatId, userId, 'Сохраняю отчет в Google Sheets, пожалуйста подождите...');
-      await appendTextReportRow(buildTextReportRow(profile, currentSession.data));
+      await createTextReport({
+        fio: profile.fio,
+        date: currentSession.data.date,
+        text: currentSession.data.reportText
+      });
       await cleanupMessages(userId);
       await deleteCallbackMessage(update);
       saveSession(userId, STATES.IDLE, {});

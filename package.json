@@ -5,6 +5,8 @@
   "main": "src/index.js",
   "scripts": {
     "check:google": "node scripts/check-google.js",
+    "test": "npm run test:miniapp",
+    "test:miniapp": "node --test test/miniapp-api.test.js",
     "start": "node src/index.js"
   },
   "engines": {

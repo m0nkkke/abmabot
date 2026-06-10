@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Фиксации</title>
+  <link rel="stylesheet" href="/miniapp/styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div class="brand-mark" aria-hidden="true">
+        <span></span>
+      </div>
+      <div>
+        <h1>Фиксации</h1>
+        <p>Рабочая форма сотрудника</p>
+      </div>
+      <button class="secondary-btn topbar-action" type="button" id="menuReturnBtn">В меню</button>
+    </header>
+
+    <nav class="tabs" aria-label="Сценарии">
+      <button class="tab active" data-tab="fixation">Фиксация</button>
+      <button class="tab" data-tab="online">Онлайн-кражи</button>
+      <button class="tab" data-tab="report">Отчет</button>
+      <button class="tab" data-tab="kso">Отписка КСО</button>
+      <button class="tab" data-tab="tech">Тех. неполадка</button>
+      <button class="tab" data-tab="anonymous">Анонимно</button>
+    </nav>
+
+    <section class="panel active" id="fixation">
+      <form id="fixationForm" class="form-grid">
+        <section class="form-section">
+          <div class="section-title">
+            <h2>Основные данные</h2>
+          </div>
+
+          <input type="hidden" name="mode" value="fixation">
+          <input type="hidden" name="editFixationId">
+          <input type="hidden" name="editOriginalRegion">
+          <label>
+            <span>ФИО</span>
+            <input name="fio" autocomplete="name" required>
+          </label>
+
+          <div class="two-cols">
+            <label>
+              <span>Регион</span>
+              <select name="regionId" required></select>
+            </label>
+            <label>
+              <span>Магазин</span>
+              <select name="shopId" required></select>
+            </label>
+          </div>
+
+          <label>
+            <span>Дата</span>
+            <input name="date" placeholder="ДД.ММ.ГГГГ" required>
+          </label>
+
+          <label class="online-comment-field hidden">
+            <span>Комментарий к онлайн-краже</span>
+            <textarea name="onlineComment" rows="4"></textarea>
+          </label>
+        </section>
+
+        <section class="form-section">
+          <div class="section-title row-title">
+            <h2>Позиции</h2>
+            <button class="icon-btn" type="button" id="addEventBtn" title="Добавить позицию">+</button>
+          </div>
+          <div id="eventsList" class="events-list"></div>
+        </section>
+
+        <section class="form-section photos-section">
+          <div class="section-title">
+            <h2>Фото</h2>
+            <span id="photoCounter">0/10</span>
+          </div>
+          <div class="photo-drop" id="photoDrop" tabindex="0" contenteditable="true" role="textbox" aria-label="Вставьте скриншот из буфера обмена">
+            <strong>Вставить фото</strong>
+            <span>кликните сюда и нажмите Ctrl+V со скриншотом</span>
+          </div>
+          <div id="photoGrid" class="photo-grid"></div>
+        </section>
+
+        <aside class="summary">
+          <h2>Сводка</h2>
+          <div id="fixationSummary"></div>
+          <button class="secondary-btn hidden" type="button" id="newFixationBtn">Новая фиксация</button>
+          <button class="secondary-btn hidden" type="button" id="cancelEditBtn">Отменить изменение</button>
+          <button class="primary-btn" type="submit">Сохранить фиксацию</button>
+          <p class="status" id="fixationStatus"></p>
+        </aside>
+      </form>
+    </section>
+
+    <section class="panel" id="online">
+      <div class="simple-form">
+        <h2>Онлайн-кражи</h2>
+        <button class="primary-btn" type="button" id="startOnlineBtn">Открыть форму онлайн-кражи</button>
+      </div>
+    </section>
+
+    <section class="panel" id="report">
+      <form class="simple-form" data-report-endpoint="/api/miniapp/reports">
+        <h2>Текстовый отчет</h2>
+        <label><span>ФИО</span><input name="fio" required></label>
+        <label><span>Дата</span><input name="date" placeholder="ДД.ММ.ГГГГ" required></label>
+        <label><span>Отчет</span><textarea name="text" rows="8" required></textarea></label>
+        <button class="primary-btn" type="submit">Сохранить отчет</button>
+        <p class="status"></p>
+      </form>
+    </section>
+
+    <section class="panel" id="kso">
+      <form class="simple-form" data-report-endpoint="/api/miniapp/kso">
+        <h2>Отписка КСО</h2>
+        <label><span>ФИО</span><input name="fio" required></label>
+        <label><span>Дата</span><input name="date" placeholder="ДД.ММ.ГГГГ" required></label>
+        <label><span>Отписка</span><textarea name="text" rows="8" required></textarea></label>
+        <button class="primary-btn" type="submit">Сохранить отписку</button>
+        <p class="status"></p>
+      </form>
+    </section>
+
+    <section class="panel" id="tech">
+      <form class="simple-form" data-report-endpoint="/api/miniapp/tech">
+        <h2>Техническая неполадка</h2>
+        <label><span>ФИО</span><input name="fio" required></label>
+        <label><span>Дата</span><input name="date" placeholder="ДД.ММ.ГГГГ" required></label>
+        <label><span>Описание</span><textarea name="text" rows="8" required></textarea></label>
+        <button class="primary-btn" type="submit">Сохранить</button>
+        <p class="status"></p>
+      </form>
+    </section>
+
+    <section class="panel" id="anonymous">
+      <form class="simple-form" data-report-endpoint="/api/miniapp/anonymous-feedback">
+        <h2>Анонимное обращение</h2>
+        <input type="hidden" name="fio" value="Анонимно">
+        <input type="hidden" name="date">
+        <label><span>Предложение или замечание</span><textarea name="text" rows="8" required></textarea></label>
+        <button class="primary-btn" type="submit">Отправить обращение</button>
+        <p class="status"></p>
+      </form>
+    </section>
+  </main>
+
+  <template id="eventTemplate">
+    <article class="event-card">
+      <div class="event-head">
+        <strong></strong>
+        <button type="button" class="remove-event" title="Удалить позицию">×</button>
+      </div>
+      <label><span>Товар</span><input class="event-item" required></label>
+      <div class="two-cols">
+        <label>
+          <span>Тип</span>
+          <select class="event-type" required></select>
+        </label>
+        <label class="violation-field hidden">
+          <span>Вид нарушения</span>
+          <select class="violation-type"></select>
+        </label>
+      </div>
+      <label><span>Сумма</span><input class="event-amount" inputmode="decimal" required></label>
+      <label class="missed-field hidden"><span>Причина упущенной кражи</span><textarea class="event-missed" rows="3"></textarea></label>
+    </article>
+  </template>
+
+  <script src="https://st.max.ru/js/max-web-app.js"></script>
+  <script src="/miniapp/app.js"></script>
+</body>
+</html>

@@ -1,4 +1,3 @@
-const { randomUUID } = require('crypto');
 const { STATES } = require('./states');
 const { EVENT_TYPES, MAX_PHOTOS_PER_RECORD, VIOLATION_TYPES } = require('./constants');
 const {
@@ -48,7 +47,8 @@ const {
     saveRecentFixation,
     isAllowedUser
 } = require('./db');
-const { appendOnlineTheftRow, appendRow, replaceFixationRows } = require('./sheets');
+const { getEvents, getPhotos, saveBotFixation } = require('./services/fixationService');
+const { createMiniAppLogin, getMiniAppSessionTtlMs } = require('./services/miniAppAuthService');
 const {
     acceptConsent,
     askConsent,
@@ -111,73 +111,6 @@ const {
 const GOOGLE_SHEET_ID = process.env.GOOGLE_SHEET_ID || '';
 const GOOGLE_SHEET_URL = process.env.GOOGLE_SHEET_URL || (GOOGLE_SHEET_ID ? `https://docs.google.com/spreadsheets/d/${GOOGLE_SHEET_ID}/edit` : '');
 
-function escapeSheetsFormulaText(value) {
-    return String(value || '').replace(/"/g, '""');
-}
-
-function buildPhotoPreviewFormula(photoUrl) {
-    if (!photoUrl) {
-        return '';
-    }
-
-    return `=IMAGE("${escapeSheetsFormulaText(photoUrl)}")`;
-}
-
-function getPhotos(data) {
-    if (Array.isArray(data.photos)) {
-        return data.photos;
-    }
-
-    if (data.photoUrl) {
-        return [{
-            photoUrl: data.photoUrl,
-            photoFileName: data.photoFileName,
-            photoAttachmentPayload: data.photoAttachmentPayload
-        }];
-    }
-
-    return [];
-}
-
-function buildPhotoCells(data) {
-    const photos = getPhotos(data).slice(0, MAX_PHOTOS_PER_RECORD);
-    const cells = [];
-
-    for (let index = 0; index < MAX_PHOTOS_PER_RECORD; index += 1) {
-        const photo = photos[index];
-        cells.push(buildPhotoPreviewFormula(photo?.photoUrl));
-        cells.push(photo?.photoUrl || '');
-    }
-
-    return cells;
-}
-
-function formatEventTypeForSheet(event) {
-    if (event.eventType === EVENT_TYPES.VIOLATION && event.violationType) {
-        return `${event.eventType}: ${event.violationType}`;
-    }
-
-    return event.eventType;
-}
-
-function getEvents(data) {
-    if (Array.isArray(data.events) && data.events.length) {
-        return data.events;
-    }
-
-    if (!data.eventType) {
-        return [];
-    }
-
-    return [{
-        item: data.item,
-        eventType: data.eventType,
-        violationType: data.violationType,
-        amount: data.amount,
-        missedReason: data.missedReason
-    }];
-}
-
 function appendCurrentEvent(data) {
     const event = {
         item: data.item,
@@ -221,73 +154,6 @@ function popLastEvent(data) {
     delete nextData.missedReason;
 
     return nextData;
-}
-
-function buildSheetRow(profile, data, event, fixationId, recordId) {
-    return [
-        profile.fio,
-        data.region || '',
-        data.shop || '',
-        data.date,
-        event.item || data.item || '',
-        formatEventTypeForSheet(event),
-        event.eventType === EVENT_TYPES.THEFT ? event.amount : '',
-        event.eventType === EVENT_TYPES.MISSED_THEFT ? event.amount : '',
-        event.eventType === EVENT_TYPES.VIOLATION ? event.amount : '',
-        event.missedReason || '',
-        ...buildPhotoCells(data),
-        fixationId,
-        recordId
-    ];
-}
-
-function buildSheetRows(profile, data) {
-    const fixationId = data.editFixationId || randomUUID();
-    return getEvents(data).map((event) => {
-        const recordId = randomUUID();
-        return {
-            event,
-            fixationId,
-            recordId,
-            row: buildSheetRow(profile, data, event, fixationId, recordId)
-        };
-    });
-}
-
-function buildOnlineTheftRow(profile, data, event, fixationId, recordId) {
-    const baseCells = [
-        profile.fio,
-        data.region || '',
-        data.shop || '',
-        data.date,
-        event.item || data.item || '',
-        formatEventTypeForSheet(event),
-        event.eventType === EVENT_TYPES.THEFT ? event.amount : '',
-        event.eventType === EVENT_TYPES.MISSED_THEFT ? event.amount : '',
-        event.eventType === EVENT_TYPES.VIOLATION ? event.amount : '',
-        event.missedReason || '',
-        data.onlineComment || ''
-    ];
-
-    return [
-        ...baseCells,
-        ...buildPhotoCells(data),
-        fixationId,
-        recordId
-    ];
-}
-
-function buildOnlineTheftRows(profile, data) {
-    const fixationId = randomUUID();
-    return getEvents(data).map((event) => {
-        const recordId = randomUUID();
-        return {
-            event,
-            fixationId,
-            recordId,
-            row: buildOnlineTheftRow(profile, data, event, fixationId, recordId)
-        };
-    });
 }
 
 function buildEventSummaryRows(data) {
@@ -370,6 +236,32 @@ function buildMainMenuAttachments() {
         ],
         [
             { text: 'Изменить запись', type: 'callback', payload: 'main_edit_record' }
+        ],
+        [
+            { text: 'Mini-app', type: 'callback', payload: 'main_miniapp' }
+        ]
+    ]);
+}
+
+function buildMiniAppOpenAttachments(login) {
+    const maxWebApp = process.env.MINIAPP_MAX_WEB_APP || '';
+    const openButton = maxWebApp
+        ? {
+            text: 'Открыть mini-app',
+            type: 'open_app',
+            web_app: maxWebApp,
+            payload: login.token
+        }
+        : {
+            text: 'Открыть mini-app',
+            type: 'link',
+            url: login.url
+        };
+
+    return inlineKeyboard([
+        [openButton],
+        [
+            { text: 'Отмена', type: 'callback', payload: 'main_menu' }
         ]
     ]);
 }
@@ -965,6 +857,20 @@ async function handleCallback(update, chatId, userId, session) {
         return;
     }
 
+    if (payload === 'main_miniapp') {
+        const login = createMiniAppLogin(userId);
+        const ttlHours = Math.max(1, Math.round(getMiniAppSessionTtlMs() / (60 * 60 * 1000)));
+        await sendMessage(
+            chatId,
+            [
+                'Mini-app готов к открытию.',
+                `Доступ действителен примерно ${ttlHours} ч.`
+            ].join('\n'),
+            buildMiniAppOpenAttachments(login)
+        );
+        return;
+    }
+
     if (payload === 'main_edit_record') {
         await deleteCallbackMessage(update);
         await showRecentFixations(chatId, userId);
@@ -1359,32 +1265,15 @@ async function handleCallback(update, chatId, userId, session) {
         try {
             await sendCleanupMessage(chatId, userId, 'Сохраняю данные в Google Sheets, пожалуйста подождите...');
 
-            const isOnlineTheft = currentSession.data.reportKind === 'online';
-            const rows = isOnlineTheft
-                ? buildOnlineTheftRows(profile, currentSession.data)
-                : buildSheetRows(profile, currentSession.data);
+            const { isOnlineTheft, rows } = await saveBotFixation({
+                profile,
+                data: currentSession.data
+            });
 
             if (!rows.length) {
                 await sendMessage(chatId, 'В чеке нет событий для сохранения. Добавьте кражу или нарушение.');
                 await askCheckAction(chatId, userId, currentSession.data);
                 return;
-            }
-
-            if (isOnlineTheft) {
-                for (const row of rows) {
-                    await appendOnlineTheftRow(row.row);
-                }
-            } else if (currentSession.data.editFixationId) {
-                await replaceFixationRows(
-                    currentSession.data.editOriginalRegion || 'Без региона',
-                    currentSession.data.region || 'Без региона',
-                    currentSession.data.editFixationId,
-                    rows.map((row) => row.row)
-                );
-            } else {
-                for (const row of rows) {
-                    await appendRow(currentSession.data.region || 'Без региона', row.row);
-                }
             }
 
             if (!isOnlineTheft) {

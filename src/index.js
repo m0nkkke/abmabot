@@ -2,11 +2,14 @@ require('dotenv').config();
 
 const dns = require('dns');
 const express = require('express');
+const path = require('path');
 const { handleUpdate } = require('./bot');
 const { registerWebhook, registerBotCommands, startPolling } = require('./maxClient');
 const { closeDb } = require('./db');
 const { seedEmployeesFromJson } = require('./employees');
 const { PHOTO_STORAGE_DIR, startPhotoCleanupScheduler } = require('./photos');
+const { miniAppApiRouter } = require('./miniapp');
+const { startMiniAppSessionCleanupScheduler } = require('./services/miniAppAuthService');
 
 dns.setDefaultResultOrder('ipv4first');
 
@@ -17,6 +20,7 @@ const BOT_MODE = (process.env.BOT_MODE || 'webhook').toLowerCase();
 const app = express();
 let stopPolling = null;
 let stopPhotoCleanup = null;
+let stopMiniAppSessionCleanup = null;
 
 if ((process.env.SEED_EMPLOYEES_FROM_JSON || '').toLowerCase() === 'true') {
   seedEmployeesFromJson();
@@ -35,9 +39,12 @@ function logError(message, error) {
   console.error(`[${new Date().toISOString()}] ${message}`, error);
 }
 
-app.use(express.json({ limit: '1mb' }));
+app.use(express.json({ limit: process.env.JSON_BODY_LIMIT || '30mb' }));
 app.use('/photos', express.static(PHOTO_STORAGE_DIR));
+app.use('/miniapp', express.static(path.join(__dirname, 'miniapp')));
+app.use('/api/miniapp', miniAppApiRouter);
 stopPhotoCleanup = startPhotoCleanupScheduler();
+stopMiniAppSessionCleanup = startMiniAppSessionCleanupScheduler();
 
 app.get('/health', (req, res) => {
   res.json({ ok: true });
@@ -67,8 +74,13 @@ const server = app.listen(PORT, async () => {
     return;
   }
 
+  if (BOT_MODE === 'miniapp') {
+    log('Режим работы: miniapp. Webhook и polling не запускаются.');
+    return;
+  }
+
   if (BOT_MODE !== 'webhook') {
-    logError(`Неизвестный BOT_MODE: ${BOT_MODE}. Используйте webhook или polling.`);
+    logError(`Неизвестный BOT_MODE: ${BOT_MODE}. Используйте webhook, polling или miniapp.`);
     return;
   }
 
@@ -92,6 +104,11 @@ function shutdown(signal) {
   if (stopPhotoCleanup) {
     stopPhotoCleanup();
     stopPhotoCleanup = null;
+  }
+
+  if (stopMiniAppSessionCleanup) {
+    stopMiniAppSessionCleanup();
+    stopMiniAppSessionCleanup = null;
   }
 
   server.close((error) => {
