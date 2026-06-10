@@ -8,6 +8,8 @@ const state = {
   recentFixations: []
 };
 
+const LAST_SELECTION_KEY = 'miniappLastSelection';
+
 const fixationForm = document.querySelector('#fixationForm');
 const eventsList = document.querySelector('#eventsList');
 const eventTemplate = document.querySelector('#eventTemplate');
@@ -18,6 +20,7 @@ const fixationStatus = document.querySelector('#fixationStatus');
 const menuReturnBtn = document.querySelector('#menuReturnBtn');
 const summary = document.querySelector('#fixationSummary');
 const startOnlineBtn = document.querySelector('#startOnlineBtn');
+const newFixationBtn = document.querySelector('#newFixationBtn');
 const cancelEditBtn = document.querySelector('#cancelEditBtn');
 
 function todayRu() {
@@ -109,6 +112,44 @@ function fillSelect(select, items, getValue, getText) {
     option.textContent = getText(item);
     select.append(option);
   });
+}
+
+function saveLastSelection() {
+  try {
+    localStorage.setItem(LAST_SELECTION_KEY, JSON.stringify({
+      regionId: fixationForm.regionId.value,
+      shopId: fixationForm.shopId.value
+    }));
+  } catch (error) {
+    // localStorage can be disabled in some webviews.
+  }
+}
+
+function applyLastSelectionDefaults() {
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(LAST_SELECTION_KEY) || 'null');
+  } catch (error) {
+    saved = null;
+  }
+
+  if (!saved?.regionId) {
+    return;
+  }
+
+  const region = state.config.regions.find((item) => String(item.id) === String(saved.regionId));
+  if (!region) {
+    return;
+  }
+
+  fixationForm.regionId.value = String(region.id);
+  updateShopSelect();
+
+  if ((region.shops || []).some((shop) => String(shop.id) === String(saved.shopId))) {
+    fixationForm.shopId.value = String(saved.shopId);
+  }
+
+  renderSummary();
 }
 
 function applyProfileDefaults() {
@@ -273,8 +314,16 @@ async function addPhotoSource(src) {
     return true;
   }
 
+  if (!src.startsWith('blob:')) {
+    return false;
+  }
+
   const response = await fetch(src);
   const blob = await response.blob();
+  if (!blob.type.startsWith('image/')) {
+    return false;
+  }
+
   state.photos.push(await fileToDataUrl(new File([blob], `clipboard-${Date.now()}.png`, { type: blob.type || 'image/png' })));
   return true;
 }
@@ -455,6 +504,7 @@ function setRecordMode(mode) {
   }
 
   cancelEditBtn?.classList.toggle('hidden', !isEdit);
+  newFixationBtn?.classList.toggle('hidden', !isEdit);
   submitButton.textContent = isOnline
     ? 'Сохранить онлайн-кражу'
     : isEdit
@@ -486,6 +536,7 @@ function resetRecordForm(mode = 'fixation') {
   fixationForm.date.value = date;
   fixationForm.editFixationId.value = '';
   fixationForm.editOriginalRegion.value = '';
+  saveLastSelection();
   applyFioDefaults(fixationForm);
 
   state.photos = [];
@@ -509,6 +560,7 @@ function selectRegionShopByNames(regionName, shopName) {
       fixationForm.shopId.value = String(shop.id);
     }
   }
+  saveLastSelection();
   renderSummary();
 }
 
@@ -659,6 +711,7 @@ async function init() {
   fillSelect(fixationForm.regionId, state.config.regions, (region) => region.id, (region) => region.name);
   updateShopSelect();
   applyProfileDefaults();
+  applyLastSelectionDefaults();
   fixationForm.date.value = todayRu();
   document.querySelectorAll('.simple-form [name="date"]').forEach((input) => {
     input.value = todayRu();
@@ -670,12 +723,22 @@ async function init() {
   initMenuReturn();
   loadRecentFixations().catch(() => {});
 
-  fixationForm.regionId.addEventListener('change', updateShopSelect);
-  fixationForm.shopId.addEventListener('change', renderSummary);
+  fixationForm.regionId.addEventListener('change', () => {
+    updateShopSelect();
+    saveLastSelection();
+  });
+  fixationForm.shopId.addEventListener('change', () => {
+    saveLastSelection();
+    renderSummary();
+  });
   document.querySelector('#addEventBtn').addEventListener('click', () => addEvent());
   startOnlineBtn?.addEventListener('click', () => {
     resetRecordForm('online');
     activatePanel('fixation');
+  });
+  newFixationBtn?.addEventListener('click', () => {
+    resetRecordForm('fixation');
+    setStatus(fixationStatus, 'Новая фиксация. Предыдущая запись не изменяется.', '');
   });
   cancelEditBtn?.addEventListener('click', () => {
     resetRecordForm('fixation');

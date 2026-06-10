@@ -3,10 +3,12 @@ const { createHmac } = require('node:crypto');
 const { after, beforeEach, describe, test } = require('node:test');
 const express = require('express');
 const { miniAppApiRouter } = require('../src/miniapp');
+const { saveEmployee } = require('../src/db');
 const { createMiniAppLogin, validateMaxWebAppInitData } = require('../src/services/miniAppAuthService');
 
 const originalMiniAppAuthRequired = process.env.MINIAPP_AUTH_REQUIRED;
 const originalRequireMaxInitData = process.env.MINIAPP_REQUIRE_MAX_INIT_DATA;
+const originalAllowMaxInitAuth = process.env.MINIAPP_ALLOW_MAX_INIT_AUTH;
 const originalMaxBotToken = process.env.MAX_BOT_TOKEN;
 
 function signMaxInitData(params, botToken) {
@@ -56,6 +58,7 @@ async function requestJson(baseUrl, path, options = {}) {
 beforeEach(() => {
   process.env.MINIAPP_AUTH_REQUIRED = 'false';
   process.env.MINIAPP_REQUIRE_MAX_INIT_DATA = 'false';
+  process.env.MINIAPP_ALLOW_MAX_INIT_AUTH = 'false';
   process.env.MAX_BOT_TOKEN = 'test-max-token';
 });
 
@@ -70,6 +73,12 @@ after(() => {
     delete process.env.MINIAPP_REQUIRE_MAX_INIT_DATA;
   } else {
     process.env.MINIAPP_REQUIRE_MAX_INIT_DATA = originalRequireMaxInitData;
+  }
+
+  if (originalAllowMaxInitAuth === undefined) {
+    delete process.env.MINIAPP_ALLOW_MAX_INIT_AUTH;
+  } else {
+    process.env.MINIAPP_ALLOW_MAX_INIT_AUTH = originalAllowMaxInitAuth;
   }
 
   if (originalMaxBotToken === undefined) {
@@ -234,6 +243,32 @@ describe('miniapp API smoke', () => {
     }
   });
 
+  test('accepts signed MAX initData without bot token for allowed users when enabled', async () => {
+    process.env.MINIAPP_AUTH_REQUIRED = 'true';
+    process.env.MINIAPP_REQUIRE_MAX_INIT_DATA = 'true';
+    process.env.MINIAPP_ALLOW_MAX_INIT_AUTH = 'true';
+    saveEmployee('54321', 'Allowed Max User', null, true, 'test');
+    const initData = signMaxInitData({
+      auth_date: '1771409719',
+      query_id: 'query-3',
+      user: JSON.stringify({ id: 54321, first_name: 'Allowed', last_name: 'User' })
+    }, 'test-max-token');
+    const server = createTestServer();
+
+    try {
+      const { response, body } = await requestJson(server.baseUrl, '/api/miniapp/bootstrap', {
+        headers: {
+          'X-Max-WebApp-Data': initData
+        }
+      });
+
+      assert.equal(response.status, 200);
+      assert.equal(body.user.userId, '54321');
+    } finally {
+      await server.close();
+    }
+  });
+
   test('validates simple report payload without writing to sheets', async () => {
     const server = createTestServer();
 
@@ -249,6 +284,26 @@ describe('miniapp API smoke', () => {
       assert.equal(response.status, 400);
       assert.equal(body.ok, false);
       assert.match(body.error, /ФИО|дату|текст/i);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('validates anonymous feedback payload without writing to sheets', async () => {
+    const server = createTestServer();
+
+    try {
+      const { response, body } = await requestJson(server.baseUrl, '/api/miniapp/anonymous-feedback', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({})
+      });
+
+      assert.equal(response.status, 400);
+      assert.equal(body.ok, false);
+      assert.match(body.error, /обращения/i);
     } finally {
       await server.close();
     }

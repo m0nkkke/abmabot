@@ -25,6 +25,7 @@
       <button class="tab" data-tab="report">Отчет</button>
       <button class="tab" data-tab="kso">КСО</button>
       <button class="tab" data-tab="tech">Тех. неполадка</button>
+      <button class="tab" data-tab="anonymous">Анонимно</button>
     </nav>
 
     <section class="panel active" id="fixation">
@@ -87,6 +88,7 @@
         <aside class="summary">
           <h2>Сводка</h2>
           <div id="fixationSummary"></div>
+          <button class="secondary-btn hidden" type="button" id="newFixationBtn">Новая фиксация</button>
           <button class="secondary-btn hidden" type="button" id="cancelEditBtn">Отменить изменение</button>
           <button class="primary-btn" type="submit">Сохранить фиксацию</button>
           <p class="status" id="fixationStatus"></p>
@@ -130,6 +132,17 @@
         <label><span>Дата</span><input name="date" placeholder="ДД.ММ.ГГГГ" required></label>
         <label><span>Описание</span><textarea name="text" rows="8" required></textarea></label>
         <button class="primary-btn" type="submit">Сохранить</button>
+        <p class="status"></p>
+      </form>
+    </section>
+
+    <section class="panel" id="anonymous">
+      <form class="simple-form" data-report-endpoint="/api/miniapp/anonymous-feedback">
+        <h2>Анонимное обращение</h2>
+        <input type="hidden" name="fio" value="Анонимно">
+        <input type="hidden" name="date">
+        <label><span>Предложение или замечание</span><textarea name="text" rows="8" required></textarea></label>
+        <button class="primary-btn" type="submit">Отправить обращение</button>
         <p class="status"></p>
       </form>
     </section>

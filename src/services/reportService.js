@@ -1,9 +1,10 @@
 const {
+  appendAnonymousFeedbackRow,
   appendKsoReportRow,
   appendTechReportRow,
   appendTextReportRow
 } = require('../sheets');
-const { isValidDate } = require('../validators');
+const { isValidDate, todayMskPlus5 } = require('../validators');
 
 function createValidationError(message) {
   const error = new Error(message);
@@ -34,6 +35,15 @@ async function createTextReport(data) {
   await appendTextReportRow([report.fio, report.date, report.text]);
 }
 
+async function createAnonymousFeedback(data) {
+  const text = normalizeText(data.text);
+  if (!text) {
+    throw createValidationError('Заполните текст обращения');
+  }
+
+  await appendAnonymousFeedbackRow(['Анонимно', todayMskPlus5(), text]);
+}
+
 async function createKsoReport(data) {
   const report = validateSimpleReport(data, 'Заполните ФИО, дату и текст отписки КСО');
   await appendKsoReportRow([report.fio, report.date, report.text]);
@@ -45,6 +55,7 @@ async function createTechReport(data) {
 }
 
 module.exports = {
+  createAnonymousFeedback,
   createKsoReport,
   createTechReport,
   createTextReport

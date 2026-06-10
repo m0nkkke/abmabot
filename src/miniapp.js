@@ -7,6 +7,7 @@ const {
   listMiniAppRecentFixations
 } = require('./services/fixationService');
 const {
+  createAnonymousFeedback,
   createKsoReport,
   createTechReport,
   createTextReport
@@ -57,6 +58,7 @@ postAction('/online-thefts', (body, req) => createOnlineTheft({
   ...body,
   userId: req.miniAppUserId || body.userId
 }));
+postAction('/anonymous-feedback', createAnonymousFeedback);
 postAction(['/reports', '/text-report'], createTextReport);
 postAction(['/kso', '/kso-report'], createKsoReport);
 postAction(['/tech', '/tech-report'], createTechReport);

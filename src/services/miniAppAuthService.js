@@ -2,6 +2,7 @@ const { createHmac, randomBytes, timingSafeEqual } = require('crypto');
 const {
   createMiniAppSession,
   deleteExpiredMiniAppSessions,
+  isAllowedUser,
   getMiniAppSession,
   markMiniAppSessionUsed
 } = require('../db');
@@ -15,6 +16,10 @@ function isMiniAppAuthRequired() {
 
 function isMaxInitDataRequired() {
   return String(process.env.MINIAPP_REQUIRE_MAX_INIT_DATA || '').toLowerCase() === 'true';
+}
+
+function isMaxInitDataAuthAllowed() {
+  return String(process.env.MINIAPP_ALLOW_MAX_INIT_AUTH || '').toLowerCase() === 'true';
 }
 
 function getMiniAppSessionTtlMs() {
@@ -177,6 +182,15 @@ function miniAppAuthMiddleware(req, res, next) {
 
   const session = validateMiniAppToken(extractMiniAppToken(req));
   if (!session) {
+    const maxUserId = maxInitData?.user?.id ? String(maxInitData.user.id) : null;
+    if (isMaxInitDataAuthAllowed() && maxUserId && isAllowedUser(maxUserId)) {
+      req.miniAppSession = null;
+      req.miniAppUserId = maxUserId;
+      req.maxWebAppData = maxInitData;
+      next();
+      return;
+    }
+
     res.status(401).json({
       ok: false,
       error: 'Требуется открыть mini-app через бота'
@@ -225,6 +239,7 @@ module.exports = {
   getMiniAppSessionTtlMs,
   isMiniAppAuthRequired,
   isMaxInitDataRequired,
+  isMaxInitDataAuthAllowed,
   miniAppAuthMiddleware,
   runMiniAppSessionCleanup,
   startMiniAppSessionCleanupScheduler,
