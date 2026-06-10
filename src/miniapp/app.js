@@ -30,13 +30,33 @@ const ksoDecisionStatus = document.querySelector('#ksoDecisionStatus');
 const ksoDecisionPreviewForm = document.querySelector('#ksoDecisionPreviewForm');
 const ksoDecisionPreview = document.querySelector('#ksoDecisionPreview');
 
-function todayRu() {
+function todayInputDate() {
   const now = new Date();
   return [
-    String(now.getDate()).padStart(2, '0'),
+    now.getFullYear(),
     String(now.getMonth() + 1).padStart(2, '0'),
-    now.getFullYear()
-  ].join('.');
+    String(now.getDate()).padStart(2, '0')
+  ].join('-');
+}
+
+function dateInputToRu(value) {
+  const text = String(value || '').trim();
+  const iso = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (iso) {
+    return `${iso[3]}.${iso[2]}.${iso[1]}`;
+  }
+
+  return text;
+}
+
+function ruDateToInput(value) {
+  const text = String(value || '').trim();
+  const ru = /^(\d{2})\.(\d{2})\.(\d{4})$/.exec(text);
+  if (ru) {
+    return `${ru[3]}-${ru[2]}-${ru[1]}`;
+  }
+
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : '';
 }
 
 function setStatus(element, text, type = '') {
@@ -558,7 +578,7 @@ function resetRecordForm(mode = 'fixation') {
   const fio = fixationForm.fio.value;
   const regionId = fixationForm.regionId.value;
   const shopId = fixationForm.shopId.value;
-  const date = fixationForm.date.value || todayRu();
+  const date = fixationForm.date.value || todayInputDate();
 
   fixationForm.reset();
   fixationForm.fio.value = fio;
@@ -622,7 +642,7 @@ function renderRecentFixations() {
     button.textContent = [data.date, data.shop, item].filter(Boolean).join(' - ');
     button.addEventListener('click', () => {
       selectRegionShopByNames(data.region, data.shop);
-      fixationForm.date.value = data.date || todayRu();
+      fixationForm.date.value = ruDateToInput(data.date) || todayInputDate();
       fixationForm.editFixationId.value = record.fixationId || '';
       fixationForm.editOriginalRegion.value = data.region || '';
       state.photos = [];
@@ -666,7 +686,7 @@ async function handleFixationSubmit(event) {
       fio: fixationForm.fio.value,
       regionId: fixationForm.regionId.value,
       shopId: fixationForm.shopId.value,
-      date: fixationForm.date.value,
+      date: dateInputToRu(fixationForm.date.value),
       events: state.events,
       photos: state.photos,
       onlineComment: fixationForm.onlineComment?.value || '',
@@ -697,12 +717,12 @@ async function handleSimpleReportSubmit(event) {
   try {
     await submitJson(form.dataset.reportEndpoint, {
       fio: form.fio.value,
-      date: form.date.value,
+      date: dateInputToRu(form.date.value),
       text: form.text.value
     });
     form.reset();
     applyFioDefaults(form);
-    form.date.value = todayRu();
+    form.date.value = todayInputDate();
     setStatus(status, 'Сохранено.', 'success');
   } catch (error) {
     setStatus(status, error.message, 'error');
@@ -721,7 +741,7 @@ function renderKsoScheduleConfirm() {
   }
 
   const statusText = getKsoScheduleStatusText(ksoScheduleForm.status.value);
-  const date = ksoScheduleForm.date.value.trim();
+  const date = dateInputToRu(ksoScheduleForm.date.value);
 
   if (!statusText && !date) {
     ksoScheduleConfirm.classList.add('hidden');
@@ -768,7 +788,7 @@ async function handleKsoScheduleSubmit(event) {
   try {
     const result = await submitJson('/api/miniapp/kso-schedule', {
       status: selectedStatus,
-      date: ksoScheduleForm.date.value
+      date: dateInputToRu(ksoScheduleForm.date.value)
     });
     setStatus(status, result.message || 'График сохранен.', 'success');
   } catch (error) {
@@ -860,6 +880,8 @@ function renderKsoDecisionPreview(preview) {
         <td>${employee.level || '-'}</td>
         <td>${employee.rs}</td>
         <td>${employee.ps}</td>
+        <td>${employee.assignedStoresCount || 1}</td>
+        <td>${employee.hardStoresToday || 0}</td>
       </tr>
     `).join('');
 
@@ -867,7 +889,7 @@ function renderKsoDecisionPreview(preview) {
       <section class="decision-card">
         <h3>${assignment.shop} · Ks ${assignment.ks}</h3>
         <table>
-          <thead><tr><th>Сотрудник</th><th>Уровень</th><th>Rs</th><th>Ps</th></tr></thead>
+          <thead><tr><th>Сотрудник</th><th>Уровень</th><th>Rs</th><th>Ps</th><th>Маг.</th><th>Сложн.</th></tr></thead>
           <tbody>${employees}</tbody>
         </table>
       </section>
@@ -895,7 +917,7 @@ async function handleKsoDecisionPreviewSubmit(event) {
   button.disabled = true;
 
   try {
-    const params = new URLSearchParams({ date: ksoDecisionPreviewForm.date.value });
+    const params = new URLSearchParams({ date: dateInputToRu(ksoDecisionPreviewForm.date.value) });
     const result = await fetchMiniAppJson(`/api/miniapp/kso-decision/preview?${params.toString()}`);
     renderKsoDecisionPreview(result.preview);
     setStatus(ksoDecisionStatus, 'Preview рассчитан без записи в таблицу.', 'success');
@@ -945,12 +967,12 @@ async function init() {
   updateShopSelect();
   applyProfileDefaults();
   applyLastSelectionDefaults();
-  fixationForm.date.value = todayRu();
+  fixationForm.date.value = todayInputDate();
   document.querySelectorAll('.simple-form [name="date"]').forEach((input) => {
-    input.value = todayRu();
+    input.value = todayInputDate();
   });
   if (ksoDecisionPreviewForm?.date) {
-    ksoDecisionPreviewForm.date.value = todayRu();
+    ksoDecisionPreviewForm.date.value = todayInputDate();
   }
 
   addEvent();
@@ -993,7 +1015,7 @@ async function init() {
   });
   ksoScheduleForm?.date.addEventListener('input', renderKsoScheduleConfirm);
   ksoScheduleTodayBtn?.addEventListener('click', () => {
-    ksoScheduleForm.date.value = todayRu();
+    ksoScheduleForm.date.value = todayInputDate();
     renderKsoScheduleConfirm();
   });
   ksoScheduleForm?.addEventListener('submit', handleKsoScheduleSubmit);

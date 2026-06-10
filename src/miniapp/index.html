@@ -58,7 +58,7 @@
 
           <label>
             <span>Дата</span>
-            <input name="date" placeholder="ДД.ММ.ГГГГ" required>
+            <input name="date" type="date" required>
           </label>
 
           <label class="online-comment-field hidden">
@@ -109,7 +109,7 @@
       <form class="simple-form" data-report-endpoint="/api/miniapp/reports">
         <h2>Текстовый отчет</h2>
         <label><span>ФИО</span><input name="fio" required></label>
-        <label><span>Дата</span><input name="date" placeholder="ДД.ММ.ГГГГ" required></label>
+        <label><span>Дата</span><input name="date" type="date" required></label>
         <label><span>Отчет</span><textarea name="text" rows="8" required></textarea></label>
         <button class="primary-btn" type="submit">Сохранить отчет</button>
         <p class="status"></p>
@@ -120,7 +120,7 @@
       <form class="simple-form" data-report-endpoint="/api/miniapp/kso">
         <h2>Отписка КСО</h2>
         <label><span>ФИО</span><input name="fio" required></label>
-        <label><span>Дата</span><input name="date" placeholder="ДД.ММ.ГГГГ" required></label>
+        <label><span>Дата</span><input name="date" type="date" required></label>
         <label><span>Отписка</span><textarea name="text" rows="8" required></textarea></label>
         <button class="primary-btn" type="submit">Сохранить отписку</button>
         <p class="status"></p>
@@ -135,7 +135,7 @@
           <button class="segment-btn" type="button" data-kso-status="work" aria-pressed="false">Работаю</button>
           <button class="segment-btn" type="button" data-kso-status="off" aria-pressed="false">Выходной</button>
         </div>
-        <label><span>Дата</span><input name="date" placeholder="ДД.ММ или ДД.ММ.ГГГГ" required></label>
+        <label><span>Дата</span><input name="date" type="date" required></label>
         <button class="secondary-btn" type="button" id="ksoScheduleTodayBtn">Сегодня</button>
         <div class="confirm-box hidden" id="ksoScheduleConfirm"></div>
         <button class="primary-btn" type="submit">Сохранить график</button>
@@ -147,7 +147,7 @@
       <div class="simple-form">
         <h2>СППР КСО</h2>
         <form class="decision-preview-form" id="ksoDecisionPreviewForm">
-          <label><span>Дата распределения</span><input name="date" placeholder="ДД.ММ или ДД.ММ.ГГГГ" required></label>
+          <label><span>Дата распределения</span><input name="date" type="date" required></label>
           <button class="primary-btn" type="submit">Рассчитать preview</button>
         </form>
         <div class="decision-preview hidden" id="ksoDecisionPreview"></div>
@@ -160,7 +160,7 @@
       <form class="simple-form" data-report-endpoint="/api/miniapp/tech">
         <h2>Техническая неполадка</h2>
         <label><span>ФИО</span><input name="fio" required></label>
-        <label><span>Дата</span><input name="date" placeholder="ДД.ММ.ГГГГ" required></label>
+        <label><span>Дата</span><input name="date" type="date" required></label>
         <label><span>Описание</span><textarea name="text" rows="8" required></textarea></label>
         <button class="primary-btn" type="submit">Сохранить</button>
         <p class="status"></p>

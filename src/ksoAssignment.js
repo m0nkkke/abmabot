@@ -733,7 +733,8 @@ function assignEmployeesDecisionPreview(data, isoDate) {
     warnings.push(`${employee.fio} — Доп. Задачи, исключен из preview.`);
     return false;
   });
-  const assignedKeys = new Set();
+  const assignmentCounts = new Map();
+  const hardStoreCounts = new Map();
   const assignments = [];
   const shops = data.shops
     .map((shop) => getDecisionStore(shop, data))
@@ -741,30 +742,64 @@ function assignEmployeesDecisionPreview(data, isoDate) {
 
   shops.forEach((shop) => {
     const slots = requiredSlots(shop);
+    const isHardStore = shop.ks >= 2.5;
     if (slots <= 0) {
       return;
     }
 
     const selected = [];
     for (let slot = 0; slot < slots; slot += 1) {
-      const candidates = eligible.filter((employee) => !assignedKeys.has(employeeKey(employee)));
+      const candidates = eligible
+        .filter((employee) => {
+          const key = employeeKey(employee);
+          const assignedCount = assignmentCounts.get(key) || 0;
+          const hardCount = hardStoreCounts.get(key) || 0;
+
+          if (assignedCount >= 4) {
+            return false;
+          }
+
+          return !isHardStore || hardCount === 0;
+        })
+        .map((employee) => {
+          const key = employeeKey(employee);
+          const assignedCount = assignmentCounts.get(key) || 0;
+          const hardCount = hardStoreCounts.get(key) || 0;
+          return {
+            employee,
+            effectivePs: employee.ps - assignedCount * 0.75 - hardCount * 3
+          };
+        });
       const employee = candidates
-        .sort((left, right) => right.ps - left.ps || left.fio.localeCompare(right.fio, 'ru'))[0];
+        .sort((left, right) => right.effectivePs - left.effectivePs || left.employee.fio.localeCompare(right.employee.fio, 'ru'))[0]?.employee;
 
       if (!employee) {
         warnings.push(`Не хватило сотрудников для ${shop.code}.`);
         break;
       }
 
-      assignedKeys.add(employeeKey(employee));
-      selected.push(employee);
+      const key = employeeKey(employee);
+      const nextAssignedCount = (assignmentCounts.get(key) || 0) + 1;
+      assignmentCounts.set(key, nextAssignedCount);
+      if (isHardStore) {
+        hardStoreCounts.set(key, (hardStoreCounts.get(key) || 0) + 1);
+      }
+      selected.push({
+        ...employee,
+        assignedStoresCount: nextAssignedCount,
+        hardStoresToday: hardStoreCounts.get(key) || 0
+      });
 
-      if (shop.ks >= 2.5 && employee.daysInRow >= 2) {
+      if (isHardStore && employee.daysInRow >= 2) {
         warnings.push(`${employee.fio} — ${employee.daysInRow + 1}-й день подряд на сложном магазине, нужна проверка.`);
       }
 
-      if (shop.ks >= 2.5 && isRestricted(employee)) {
+      if (isHardStore && isRestricted(employee)) {
         warnings.push(`${employee.fio} — ограниченный уровень на сложном магазине, только при нехватке людей.`);
+      }
+
+      if (nextAssignedCount === 4) {
+        warnings.push(`${employee.fio} — достигнут дневной лимит 4 магазина.`);
       }
     }
 
@@ -773,13 +808,18 @@ function assignEmployeesDecisionPreview(data, isoDate) {
     }
   });
 
-  const reserve = eligible.filter((employee) => !assignedKeys.has(employeeKey(employee)));
+  const reserve = eligible.filter((employee) => !assignmentCounts.has(employeeKey(employee)));
 
   return {
     isoDate,
     available,
     assignments,
     reserve,
+    employeeLoads: [...assignmentCounts.entries()].map(([key, count]) => ({
+      key,
+      count,
+      hardCount: hardStoreCounts.get(key) || 0
+    })),
     warnings: [...new Set(warnings)]
   };
 }
@@ -926,6 +966,8 @@ function serializeDecisionPreview(result) {
         coefficient: employee.employeeCoefficient,
         daysWithoutHardStore: employee.daysWithoutHardStore,
         daysInRow: employee.daysInRow,
+        assignedStoresCount: employee.assignedStoresCount || 0,
+        hardStoresToday: employee.hardStoresToday || 0,
         kpiPeriod: employee.kpiPeriod
       }))
     })),
