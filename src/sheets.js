@@ -1229,6 +1229,9 @@ const KSO_SCHEDULE_SHEET_NAME = 'График';
 const KSO_SHOPS_SHEET_NAME = 'Магазины';
 const KSO_ANALYTICS_SHEET_NAME = 'Аналитика';
 const KSO_DAILY_SHEET_NAME = 'Ежедневное распределение';
+const KSO_DECISION_SETTINGS_SHEET_NAME = 'Нормативы СППР';
+const KSO_STORE_COMPLEXITY_SHEET_NAME = 'Сложность магазинов';
+const KSO_KPI_SHEET_NAME = 'KPI СППР';
 const KSO_EMPLOYEE_HEADERS = ['№', 'ФИО', 'Имя', 'Уровень', 'Коэффициент', 'Гиперов за месяц', 'Статус', 'Приоритет', 'Ограничения'];
 const KSO_SCHEDULE_HEADERS = ['№', 'ФИО', 'Имя', ...Array.from({ length: 31 }, (_, index) => String(index + 1))];
 const KSO_SHOP_HEADERS = ['Магазин', 'Категория', 'Приоритет', 'Нужно сотрудников', 'Поток'];
@@ -1243,6 +1246,16 @@ const KSO_DAILY_HEADERS = [
   'Назначение'
 ];
 const KSO_ANALYTICS_HEADERS = ['Сотрудник', 'Гиперов', 'Средних', 'Маленьких', 'Баллы', 'Последний гипер'];
+const KSO_DECISION_SETTINGS_HEADERS = ['Стаж', 'Норма КСО', 'Норма сторно', 'Норма онлайн', 'Норма персонал', 'Вес КСО', 'Вес сторно', 'Вес онлайн', 'Вес персонал'];
+const KSO_STORE_COMPLEXITY_HEADERS = ['Магазин', 'Поток 1-3', 'Кассы 1-3', 'Кражи 1-3', 'Ks', 'Комментарий'];
+const KSO_KPI_HEADERS = ['Период', 'ФИО', 'Стаж', 'КСО', 'Сторно', 'Онлайн', 'Персонал', 'Часы', 'Баллы', 'KPI', 'Rs'];
+const KSO_DECISION_SETTINGS_DEFAULT_ROWS = [
+  KSO_DECISION_SETTINGS_HEADERS,
+  ['до 1 мес', 30, 25, 3, 35, 1.169, 1.395, 11.357, 1],
+  ['1-3 мес', 30, 25, 3, 35, 1.169, 1.395, 11.357, 1],
+  ['3-6 мес', 42, 30, 5, 45, 1.073, 1.507, 8.913, 1],
+  ['6+ мес', 58, 45, 8, 56, 1, 1.288, 7.333, 1.035]
+];
 
 function formatKsoDateHeader(isoDate) {
   const [year, month, day] = isoDate.split('-');
@@ -1353,6 +1366,9 @@ async function ensureKsoAssignmentSheets(sheets, isoDate, historySheetName) {
   await ensureKsoSheetExists(sheets, KSO_ASSIGNMENT_SHEET_ID, KSO_SHOPS_SHEET_NAME, KSO_SHOP_HEADERS, 100, KSO_SHOP_HEADERS.length);
   await ensureKsoSheetExists(sheets, KSO_ASSIGNMENT_SHEET_ID, KSO_ANALYTICS_SHEET_NAME, KSO_ANALYTICS_HEADERS, 100, KSO_ANALYTICS_HEADERS.length);
   await ensureKsoSheetExists(sheets, KSO_ASSIGNMENT_SHEET_ID, KSO_DAILY_SHEET_NAME, KSO_DAILY_HEADERS, 100, KSO_DAILY_HEADERS.length);
+  await ensureKsoSheetExists(sheets, KSO_ASSIGNMENT_SHEET_ID, KSO_DECISION_SETTINGS_SHEET_NAME, KSO_DECISION_SETTINGS_HEADERS, 20, KSO_DECISION_SETTINGS_HEADERS.length);
+  await ensureKsoSheetExists(sheets, KSO_ASSIGNMENT_SHEET_ID, KSO_STORE_COMPLEXITY_SHEET_NAME, KSO_STORE_COMPLEXITY_HEADERS, 100, KSO_STORE_COMPLEXITY_HEADERS.length);
+  await ensureKsoSheetExists(sheets, KSO_ASSIGNMENT_SHEET_ID, KSO_KPI_SHEET_NAME, KSO_KPI_HEADERS, 100, KSO_KPI_HEADERS.length);
   await ensureKsoSheetExists(sheets, KSO_ASSIGNMENT_SHEET_ID, historySheetName, getKsoHistoryHeaders(isoDate), 100, getKsoHistoryHeaders(isoDate).length);
 }
 
@@ -1369,7 +1385,9 @@ async function getKsoAssignmentSheetData(isoDate, historySheetName) {
     `'${escapeSheetName(KSO_SCHEDULE_SHEET_NAME)}'!A:AH`,
     `'${escapeSheetName(KSO_SHOPS_SHEET_NAME)}'!A:F`,
     `'${escapeSheetName(historySheetName)}'!A:AJ`,
-    `'${escapeSheetName(KSO_ANALYTICS_SHEET_NAME)}'!A:F`
+    `'${escapeSheetName(KSO_ANALYTICS_SHEET_NAME)}'!A:F`,
+    `'${escapeSheetName(KSO_STORE_COMPLEXITY_SHEET_NAME)}'!A:F`,
+    `'${escapeSheetName(KSO_KPI_SHEET_NAME)}'!A:K`
   ];
 
   const response = await withTimeout(
@@ -1393,6 +1411,8 @@ async function getKsoAssignmentSheetData(isoDate, historySheetName) {
     shops: valueRanges[2]?.values || [],
     history: valueRanges[3]?.values || [],
     analytics: valueRanges[4]?.values || [],
+    storeComplexity: valueRanges[5]?.values || [],
+    kpi: valueRanges[6]?.values || [],
     historySheetName
   };
 }
@@ -1478,7 +1498,7 @@ function buildKsoEmployeeCounterUpdates(result) {
   return getKsoAssignmentEmployees(result, 'hyper')
     .filter((item) => item.employee.rowNumber)
     .map((item) => ({
-      range: `'${escapeSheetName(KSO_EMPLOYEES_SHEET_NAME)}'!E${item.employee.rowNumber}:E${item.employee.rowNumber}`,
+      range: `'${escapeSheetName(KSO_EMPLOYEES_SHEET_NAME)}'!F${item.employee.rowNumber}:F${item.employee.rowNumber}`,
       values: [[Number(item.employee.monthHyperCount || item.employee.hyperCount || 0) + 1]]
     }));
 }
@@ -1598,7 +1618,7 @@ async function writeKsoManualAssignment(isoDate, employee, shop, data) {
     updates.push(...buildKsoHistoryUpdates(isoDate, result, data));
     if (employee.rowNumber) {
       updates.push({
-        range: `'${escapeSheetName(KSO_EMPLOYEES_SHEET_NAME)}'!E${employee.rowNumber}:E${employee.rowNumber}`,
+        range: `'${escapeSheetName(KSO_EMPLOYEES_SHEET_NAME)}'!F${employee.rowNumber}:F${employee.rowNumber}`,
         values: [[Number(employee.hyperCount || 0) + 1]]
       });
     }
@@ -1739,6 +1759,23 @@ function buildKsoShopRows(shops) {
   ];
 }
 
+function buildKsoStoreComplexityRows(shops) {
+  return [
+    KSO_STORE_COMPLEXITY_HEADERS,
+    ...shops.map((shop, index) => {
+      const rowNumber = index + 2;
+      return [
+        shop.code,
+        '',
+        '',
+        '',
+        `=IFERROR(ROUND(B${rowNumber}*0.4+C${rowNumber}*0.3+D${rowNumber}*0.3,2),"")`,
+        ''
+      ];
+    })
+  ];
+}
+
 async function initializeKsoAssignmentSheet(isoDate, employees, shops, historySheetName) {
   if (!KSO_ASSIGNMENT_SHEET_ID) {
     throw new Error('Не задана переменная окружения GOOGLE_KSO_ASSIGNMENT_SHEET_ID');
@@ -1750,8 +1787,10 @@ async function initializeKsoAssignmentSheet(isoDate, employees, shops, historySh
   const employeeRows = buildKsoEmployeeRows(employees);
   const scheduleRows = buildKsoScheduleRows(employees);
   const shopRows = buildKsoShopRows(shops);
+  const storeComplexityRows = buildKsoStoreComplexityRows(shops);
   const analyticsRows = buildKsoAnalyticsInitRows(employees);
   const dailyRows = [KSO_DAILY_HEADERS];
+  const kpiRows = [KSO_KPI_HEADERS];
 
   await withTimeout(
     sheets.spreadsheets.values.batchClear({
@@ -1762,7 +1801,10 @@ async function initializeKsoAssignmentSheet(isoDate, employees, shops, historySh
           `'${escapeSheetName(KSO_SCHEDULE_SHEET_NAME)}'!A:AH`,
           `'${escapeSheetName(KSO_SHOPS_SHEET_NAME)}'!A:F`,
           `'${escapeSheetName(KSO_ANALYTICS_SHEET_NAME)}'!A:F`,
-          `'${escapeSheetName(KSO_DAILY_SHEET_NAME)}'!A:G`
+          `'${escapeSheetName(KSO_DAILY_SHEET_NAME)}'!A:G`,
+          `'${escapeSheetName(KSO_DECISION_SETTINGS_SHEET_NAME)}'!A:I`,
+          `'${escapeSheetName(KSO_STORE_COMPLEXITY_SHEET_NAME)}'!A:F`,
+          `'${escapeSheetName(KSO_KPI_SHEET_NAME)}'!A:K`
         ]
       }
     }, {
@@ -1796,6 +1838,18 @@ async function initializeKsoAssignmentSheet(isoDate, employees, shops, historySh
           {
             range: `'${escapeSheetName(KSO_DAILY_SHEET_NAME)}'!A1:G1`,
             values: dailyRows
+          },
+          {
+            range: `'${escapeSheetName(KSO_DECISION_SETTINGS_SHEET_NAME)}'!A1:I${KSO_DECISION_SETTINGS_DEFAULT_ROWS.length}`,
+            values: KSO_DECISION_SETTINGS_DEFAULT_ROWS
+          },
+          {
+            range: `'${escapeSheetName(KSO_STORE_COMPLEXITY_SHEET_NAME)}'!A1:F${storeComplexityRows.length}`,
+            values: storeComplexityRows
+          },
+          {
+            range: `'${escapeSheetName(KSO_KPI_SHEET_NAME)}'!A1:K1`,
+            values: kpiRows
           }
         ]
       }

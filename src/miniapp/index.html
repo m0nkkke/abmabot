@@ -24,6 +24,8 @@
       <button class="tab" data-tab="online">Онлайн-кражи</button>
       <button class="tab" data-tab="report">Отчет</button>
       <button class="tab" data-tab="kso">Отписка КСО</button>
+      <button class="tab" data-tab="ksoSchedule">График КСО</button>
+      <button class="tab" data-tab="ksoDecision">СППР КСО</button>
       <button class="tab" data-tab="tech">Тех. неполадка</button>
       <button class="tab" data-tab="anonymous">Анонимно</button>
     </nav>
@@ -123,6 +125,35 @@
         <button class="primary-btn" type="submit">Сохранить отписку</button>
         <p class="status"></p>
       </form>
+    </section>
+
+    <section class="panel" id="ksoSchedule">
+      <form class="simple-form" id="ksoScheduleForm">
+        <h2>График КСО</h2>
+        <input type="hidden" name="status" required>
+        <div class="segmented" role="radiogroup" aria-label="Статус графика КСО">
+          <button class="segment-btn" type="button" data-kso-status="work" aria-pressed="false">Работаю</button>
+          <button class="segment-btn" type="button" data-kso-status="off" aria-pressed="false">Выходной</button>
+        </div>
+        <label><span>Дата</span><input name="date" placeholder="ДД.ММ или ДД.ММ.ГГГГ" required></label>
+        <button class="secondary-btn" type="button" id="ksoScheduleTodayBtn">Сегодня</button>
+        <div class="confirm-box hidden" id="ksoScheduleConfirm"></div>
+        <button class="primary-btn" type="submit">Сохранить график</button>
+        <p class="status"></p>
+      </form>
+    </section>
+
+    <section class="panel" id="ksoDecision">
+      <div class="simple-form">
+        <h2>СППР КСО</h2>
+        <form class="decision-preview-form" id="ksoDecisionPreviewForm">
+          <label><span>Дата распределения</span><input name="date" placeholder="ДД.ММ или ДД.ММ.ГГГГ" required></label>
+          <button class="primary-btn" type="submit">Рассчитать preview</button>
+        </form>
+        <div class="decision-preview hidden" id="ksoDecisionPreview"></div>
+        <div class="decision-grid" id="ksoDecisionModel"></div>
+        <p class="status" id="ksoDecisionStatus"></p>
+      </div>
     </section>
 
     <section class="panel" id="tech">

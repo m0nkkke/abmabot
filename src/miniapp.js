@@ -12,6 +12,13 @@ const {
   createTechReport,
   createTextReport
 } = require('./services/reportService');
+const { createKsoScheduleStatus } = require('./services/ksoScheduleService');
+const { getKsoDecisionModel } = require('./services/ksoDecisionService');
+const {
+  parseInputDate,
+  previewKsoDecisionAssignment,
+  todayIso
+} = require('./ksoAssignment');
 
 const router = express.Router();
 
@@ -50,6 +57,28 @@ router.get('/fixations/recent', (req, res) => {
   });
 });
 
+router.get('/kso-decision/model', (req, res) => {
+  res.json({ ok: true, model: getKsoDecisionModel() });
+});
+
+router.get('/kso-decision/preview', async (req, res, next) => {
+  try {
+    const isoDate = req.query.date ? parseInputDate(req.query.date) : todayIso();
+    if (!isoDate) {
+      const error = new Error('Укажите дату в формате ДД.ММ или ДД.ММ.ГГГГ');
+      error.statusCode = 400;
+      throw error;
+    }
+
+    res.json({
+      ok: true,
+      preview: await previewKsoDecisionAssignment(isoDate)
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 postAction('/fixations', (body, req) => createFixation({
   ...body,
   userId: req.miniAppUserId || body.userId
@@ -61,6 +90,7 @@ postAction('/online-thefts', (body, req) => createOnlineTheft({
 postAction('/anonymous-feedback', createAnonymousFeedback);
 postAction(['/reports', '/text-report'], createTextReport);
 postAction(['/kso', '/kso-report'], createKsoReport);
+postAction('/kso-schedule', createKsoScheduleStatus);
 postAction(['/tech', '/tech-report'], createTechReport);
 
 router.use((error, req, res, next) => {

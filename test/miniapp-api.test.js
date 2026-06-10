@@ -340,6 +340,56 @@ describe('miniapp API smoke', () => {
     }
   });
 
+  test('validates KSO schedule payload without writing to sheets', async () => {
+    const server = createTestServer();
+
+    try {
+      const { response, body } = await requestJson(server.baseUrl, '/api/miniapp/kso-schedule', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({})
+      });
+
+      assert.equal(response.status, 400);
+      assert.equal(body.ok, false);
+      assert.match(body.error, /статус|дату|ДД\.ММ/i);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('serves KSO decision model', async () => {
+    const server = createTestServer();
+
+    try {
+      const { response, body } = await requestJson(server.baseUrl, '/api/miniapp/kso-decision/model');
+
+      assert.equal(response.status, 200);
+      assert.equal(body.ok, true);
+      assert.equal(body.model.storeComplexity.formula.includes('Ks'), true);
+      assert.equal(body.model.employeeKpi.eventPointWeights.online, 4);
+      assert.equal(Array.isArray(body.model.employeeKpi.norms), true);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('validates KSO decision preview date before reading sheets', async () => {
+    const server = createTestServer();
+
+    try {
+      const { response, body } = await requestJson(server.baseUrl, '/api/miniapp/kso-decision/preview?date=bad-date');
+
+      assert.equal(response.status, 400);
+      assert.equal(body.ok, false);
+      assert.match(body.error, /ДД\.ММ/i);
+    } finally {
+      await server.close();
+    }
+  });
+
   test('keeps legacy simple report endpoint compatible', async () => {
     const server = createTestServer();
 

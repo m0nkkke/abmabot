@@ -11,6 +11,10 @@ const {
   writeKsoManualAssignment,
   writeKsoScheduleStatus
 } = require('./sheets');
+const {
+  calculateAssignmentPriority,
+  calculateStoreComplexity
+} = require('./services/ksoDecisionService');
 
 const GOOGLE_SHEETS_ERROR_TEXT = 'Не удалось получить данные из таблицы. Попробуйте позже.';
 const CACHE_TTL_MS = 10 * 60 * 1000;
@@ -35,6 +39,13 @@ const LEVEL_COEFFICIENTS = {
   'стандарт': 1,
   'новичок': 1.2,
   'ограниченный': 1.5
+};
+
+const DECISION_LEVEL_COEFFICIENTS = {
+  'сильн': 0.9,
+  'стандарт': 1,
+  'нов': 1.1,
+  'огранич': 0.1
 };
 
 const CATEGORY_LABELS = {
@@ -325,6 +336,64 @@ function parseAnalytics(rows) {
     .filter((item) => item.fio);
 }
 
+function parseStoreComplexity(rows) {
+  const [headers = [], ...dataRows] = rows || [];
+  const columns = buildColumnMap(headers);
+  const byCode = new Map();
+
+  dataRows.forEach((row) => {
+    const code = String(getCell(row, columns, ['Магазин', 'Код'], 0) || '').trim();
+    if (!code) {
+      return;
+    }
+
+    const flow = numberValue(getCell(row, columns, ['Поток 1-3', 'Поток'], 1), 0);
+    const cashRegisters = numberValue(getCell(row, columns, ['Кассы 1-3', 'Кассы'], 2), 0);
+    const thefts = numberValue(getCell(row, columns, ['Кражи 1-3', 'Кражи'], 3), 0);
+    const explicitKs = numberValue(getCell(row, columns, ['Ks', 'Сложность'], 4), 0);
+    const ks = explicitKs || (flow && cashRegisters && thefts
+      ? calculateStoreComplexity({ flow, cashRegisters, thefts })
+      : 0);
+
+    byCode.set(normalizeText(code), {
+      code,
+      flow,
+      cashRegisters,
+      thefts,
+      ks
+    });
+  });
+
+  return byCode;
+}
+
+function parseDecisionKpi(rows) {
+  const [headers = [], ...dataRows] = rows || [];
+  const columns = buildColumnMap(headers);
+  const byFio = new Map();
+
+  dataRows.forEach((row) => {
+    const fio = String(getCell(row, columns, ['ФИО', 'Сотрудник'], 1) || '').trim();
+    if (!fio) {
+      return;
+    }
+
+    const rs = numberValue(getCell(row, columns, ['Rs', 'Рейтинг'], 10), 0)
+      || numberValue(getCell(row, columns, ['KPI', 'КПИ'], 9), 0)
+      || 1;
+    const points = numberValue(getCell(row, columns, ['Баллы'], 8), 0);
+
+    byFio.set(normalizeFio(fio), {
+      fio,
+      period: String(getCell(row, columns, ['Период'], 0) || '').trim(),
+      points,
+      rs
+    });
+  });
+
+  return byFio;
+}
+
 function mergeDictionaries(sheetData, isoDate) {
   const now = Date.now();
   const parsedEmployees = parseEmployees(sheetData.employees);
@@ -342,6 +411,8 @@ function mergeDictionaries(sheetData, isoDate) {
     schedule: parseSchedule(sheetData.schedule, isoDate),
     history: parseHistory(sheetData.history, isoDate),
     analytics: parseAnalytics(sheetData.analytics),
+    storeComplexity: parseStoreComplexity(sheetData.storeComplexity),
+    decisionKpi: parseDecisionKpi(sheetData.kpi),
     historySheetName: sheetData.historySheetName
   };
 }
@@ -354,6 +425,8 @@ function getDictionaries(sheetData, isoDate) {
       schedule: parseSchedule(sheetData.schedule, isoDate),
       history: parseHistory(sheetData.history, isoDate),
       analytics: parseAnalytics(sheetData.analytics),
+      storeComplexity: parseStoreComplexity(sheetData.storeComplexity),
+      decisionKpi: parseDecisionKpi(sheetData.kpi),
       historySheetName: sheetData.historySheetName
     };
   }
@@ -559,6 +632,158 @@ function assignEmployees(data, isoDate) {
   };
 }
 
+function daysBetween(leftIsoDate, rightIsoDate) {
+  if (!leftIsoDate || !rightIsoDate) {
+    return 30;
+  }
+
+  const left = new Date(`${leftIsoDate}T00:00:00Z`).getTime();
+  const right = new Date(`${rightIsoDate}T00:00:00Z`).getTime();
+  if (!Number.isFinite(left) || !Number.isFinite(right)) {
+    return 30;
+  }
+
+  return Math.max(1, Math.round((left - right) / (24 * 60 * 60 * 1000)));
+}
+
+function getDecisionEmployeeCoefficient(employee) {
+  const level = normalizeText(employee.level);
+  const found = Object.entries(DECISION_LEVEL_COEFFICIENTS)
+    .find(([key]) => level.includes(key));
+
+  return found?.[1] || 1;
+}
+
+function fallbackStoreComplexity(shop) {
+  const category = getShopCategory(shop);
+  if (category === 'hyper') {
+    return 3;
+  }
+  if (category === 'medium') {
+    return 2;
+  }
+  return 1;
+}
+
+function getDecisionStore(shop, data) {
+  const configured = data.storeComplexity?.get(normalizeText(shop.code));
+  const ks = configured?.ks || fallbackStoreComplexity(shop);
+
+  return {
+    ...shop,
+    ks,
+    complexitySource: configured?.ks ? 'sheet' : 'category'
+  };
+}
+
+function enrichDecisionEmployee(employee, data, isoDate) {
+  const kpi = data.decisionKpi?.get(normalizeFio(employee.fio));
+  const rs = kpi?.rs || 1;
+  const employeeCoefficient = getDecisionEmployeeCoefficient(employee);
+  const daysWithoutHardStore = daysBetween(isoDate, employee.lastHyper) || 30;
+  const restrictionPenalty = isRestricted(employee) ? 3 : 0;
+  const overtimePenalty = employee.daysInRow >= 7 ? employee.daysInRow - 6 : 0;
+  const ps = calculateAssignmentPriority({
+    rs,
+    employeeCoefficient,
+    daysWithoutHardStore,
+    consecutiveHardStoreDays: employee.daysInRow,
+    overtimePenalty,
+    restrictionPenalty
+  });
+
+  return {
+    ...employee,
+    rs,
+    ps,
+    kpiPeriod: kpi?.period || '',
+    employeeCoefficient,
+    daysWithoutHardStore,
+    restrictionPenalty,
+    overtimePenalty
+  };
+}
+
+function assignEmployeesDecisionPreview(data, isoDate) {
+  const warnings = [];
+  const available = buildAvailableEmployees(data).map((employee) => enrichDecisionEmployee(employee, data, isoDate));
+
+  if (!available.length) {
+    return {
+      isoDate,
+      available,
+      assignments: [],
+      reserve: [],
+      warnings: ['На выбранную дату никто не отмечен как работающий.']
+    };
+  }
+
+  if (!data.decisionKpi?.size) {
+    warnings.push('Лист KPI СППР пустой: для сотрудников используется нейтральный рейтинг Rs = 1.');
+  }
+
+  if (!data.storeComplexity?.size) {
+    warnings.push('Лист Сложность магазинов пустой: Ks взят по категории магазина.');
+  }
+
+  const eligible = available.filter((employee) => {
+    if (!hasExtraTasks(employee)) {
+      return true;
+    }
+    warnings.push(`${employee.fio} — Доп. Задачи, исключен из preview.`);
+    return false;
+  });
+  const assignedKeys = new Set();
+  const assignments = [];
+  const shops = data.shops
+    .map((shop) => getDecisionStore(shop, data))
+    .sort((left, right) => right.ks - left.ks || right.priority - left.priority || left.code.localeCompare(right.code, 'ru'));
+
+  shops.forEach((shop) => {
+    const slots = requiredSlots(shop);
+    if (slots <= 0) {
+      return;
+    }
+
+    const selected = [];
+    for (let slot = 0; slot < slots; slot += 1) {
+      const candidates = eligible.filter((employee) => !assignedKeys.has(employeeKey(employee)));
+      const employee = candidates
+        .sort((left, right) => right.ps - left.ps || left.fio.localeCompare(right.fio, 'ru'))[0];
+
+      if (!employee) {
+        warnings.push(`Не хватило сотрудников для ${shop.code}.`);
+        break;
+      }
+
+      assignedKeys.add(employeeKey(employee));
+      selected.push(employee);
+
+      if (shop.ks >= 2.5 && employee.daysInRow >= 2) {
+        warnings.push(`${employee.fio} — ${employee.daysInRow + 1}-й день подряд на сложном магазине, нужна проверка.`);
+      }
+
+      if (shop.ks >= 2.5 && isRestricted(employee)) {
+        warnings.push(`${employee.fio} — ограниченный уровень на сложном магазине, только при нехватке людей.`);
+      }
+    }
+
+    if (selected.length) {
+      assignments.push({ shop, category: getShopCategory(shop), employees: selected });
+    }
+  });
+
+  const reserve = eligible.filter((employee) => !assignedKeys.has(employeeKey(employee)));
+
+  return {
+    isoDate,
+    available,
+    assignments,
+    reserve,
+    warnings: [...new Set(warnings)]
+  };
+}
+
 function buildDailyRows(available, assignments) {
   const assigned = new Map();
   assignments.forEach((assignment) => {
@@ -681,6 +906,43 @@ async function runKsoAssignment(isoDate) {
     logError('Не удалось выполнить распределение КСО:', error);
     return GOOGLE_SHEETS_ERROR_TEXT;
   }
+}
+
+function serializeDecisionPreview(result) {
+  return {
+    isoDate: result.isoDate,
+    date: formatDisplayDate(result.isoDate),
+    availableCount: result.available.length,
+    assignments: result.assignments.map((assignment) => ({
+      shop: assignment.shop.code,
+      category: assignment.category,
+      ks: assignment.shop.ks,
+      complexitySource: assignment.shop.complexitySource,
+      employees: assignment.employees.map((employee) => ({
+        fio: employee.fio,
+        level: employee.level,
+        rs: employee.rs,
+        ps: employee.ps,
+        coefficient: employee.employeeCoefficient,
+        daysWithoutHardStore: employee.daysWithoutHardStore,
+        daysInRow: employee.daysInRow,
+        kpiPeriod: employee.kpiPeriod
+      }))
+    })),
+    reserve: result.reserve.map((employee) => ({
+      fio: employee.fio,
+      level: employee.level,
+      rs: employee.rs,
+      ps: employee.ps
+    })),
+    warnings: result.warnings
+  };
+}
+
+async function previewKsoDecisionAssignment(isoDate) {
+  const data = await loadAssignmentData(isoDate);
+  const result = assignEmployeesDecisionPreview(data, isoDate);
+  return serializeDecisionPreview(result);
 }
 
 async function showKsoAnalytics(isoDate = todayIso()) {
@@ -812,6 +1074,7 @@ module.exports = {
   isPastDate,
   parseAssignmentCommandDate,
   parseInputDate,
+  previewKsoDecisionAssignment,
   runKsoAssignment,
   showKsoAnalytics,
   showWorkingEmployees,

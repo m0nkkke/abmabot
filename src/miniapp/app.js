@@ -22,6 +22,13 @@ const summary = document.querySelector('#fixationSummary');
 const startOnlineBtn = document.querySelector('#startOnlineBtn');
 const newFixationBtn = document.querySelector('#newFixationBtn');
 const cancelEditBtn = document.querySelector('#cancelEditBtn');
+const ksoScheduleForm = document.querySelector('#ksoScheduleForm');
+const ksoScheduleConfirm = document.querySelector('#ksoScheduleConfirm');
+const ksoScheduleTodayBtn = document.querySelector('#ksoScheduleTodayBtn');
+const ksoDecisionModel = document.querySelector('#ksoDecisionModel');
+const ksoDecisionStatus = document.querySelector('#ksoDecisionStatus');
+const ksoDecisionPreviewForm = document.querySelector('#ksoDecisionPreviewForm');
+const ksoDecisionPreview = document.querySelector('#ksoDecisionPreview');
 
 function todayRu() {
   const now = new Date();
@@ -679,6 +686,201 @@ async function handleSimpleReportSubmit(event) {
   }
 }
 
+function getKsoScheduleStatusText(status) {
+  return status === 'work' ? 'Работаю' : status === 'off' ? 'Выходной' : '';
+}
+
+function renderKsoScheduleConfirm() {
+  if (!ksoScheduleForm || !ksoScheduleConfirm) {
+    return;
+  }
+
+  const statusText = getKsoScheduleStatusText(ksoScheduleForm.status.value);
+  const date = ksoScheduleForm.date.value.trim();
+
+  if (!statusText && !date) {
+    ksoScheduleConfirm.classList.add('hidden');
+    ksoScheduleConfirm.innerHTML = '';
+    return;
+  }
+
+  ksoScheduleConfirm.classList.remove('hidden');
+  ksoScheduleConfirm.innerHTML = `
+    <strong>Проверьте перед сохранением</strong>
+    <span>Статус: ${statusText || '-'}</span>
+    <span>Дата: ${date || '-'}</span>
+  `;
+}
+
+function setKsoScheduleStatus(status) {
+  if (!ksoScheduleForm) {
+    return;
+  }
+
+  ksoScheduleForm.status.value = status;
+  ksoScheduleForm.querySelectorAll('[data-kso-status]').forEach((button) => {
+    const active = button.dataset.ksoStatus === status;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', active ? 'true' : 'false');
+  });
+  renderKsoScheduleConfirm();
+}
+
+async function handleKsoScheduleSubmit(event) {
+  event.preventDefault();
+  const status = ksoScheduleForm.querySelector('.status');
+  const button = ksoScheduleForm.querySelector('.primary-btn');
+  const selectedStatus = ksoScheduleForm.status.value;
+
+  if (!selectedStatus) {
+    setStatus(status, 'Выберите статус: Работаю или Выходной.', 'error');
+    return;
+  }
+
+  setStatus(status, 'Сохраняю...', '');
+  button.disabled = true;
+
+  try {
+    const result = await submitJson('/api/miniapp/kso-schedule', {
+      status: selectedStatus,
+      date: ksoScheduleForm.date.value
+    });
+    setStatus(status, result.message || 'График сохранен.', 'success');
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
+function renderKsoDecisionModel(model) {
+  if (!ksoDecisionModel || !model) {
+    return;
+  }
+
+  const normRows = (model.employeeKpi?.norms || []).map((norm) => `
+    <tr>
+      <td>${norm.experience}</td>
+      <td>${norm.kso}</td>
+      <td>${norm.checkout}</td>
+      <td>${norm.online}</td>
+      <td>${norm.staff}</td>
+    </tr>
+  `).join('');
+  const eventWeights = model.employeeKpi?.eventPointWeights || {};
+  const employeeCoefficients = model.assignment?.employeeCoefficients || {};
+
+  ksoDecisionModel.innerHTML = `
+    <section class="decision-card">
+      <h3>Сложность магазина</h3>
+      <p>${model.storeComplexity?.formula || ''}</p>
+      <p>Диапазон: ${model.storeComplexity?.min} - ${model.storeComplexity?.max}</p>
+    </section>
+    <section class="decision-card">
+      <h3>Баллы событий</h3>
+      <table>
+        <tbody>
+          <tr><th>КСО</th><td>${eventWeights.kso}</td></tr>
+          <tr><th>Сторно</th><td>${eventWeights.checkout}</td></tr>
+          <tr><th>Онлайн</th><td>${eventWeights.online}</td></tr>
+          <tr><th>Персонал</th><td>${eventWeights.staff}</td></tr>
+        </tbody>
+      </table>
+    </section>
+    <section class="decision-card">
+      <h3>Нормативы по стажу</h3>
+      <table>
+        <thead><tr><th>Стаж</th><th>КСО</th><th>Сторно</th><th>Онлайн</th><th>Персонал</th></tr></thead>
+        <tbody>${normRows}</tbody>
+      </table>
+    </section>
+    <section class="decision-card">
+      <h3>Назначение</h3>
+      <p>${model.assignment?.formula || ''}</p>
+      <table>
+        <tbody>
+          <tr><th>Сильный</th><td>${employeeCoefficients.strong}</td></tr>
+          <tr><th>Стандарт</th><td>${employeeCoefficients.standard}</td></tr>
+          <tr><th>Новичок</th><td>${employeeCoefficients.trainee}</td></tr>
+          <tr><th>Ограниченный</th><td>${employeeCoefficients.restricted}</td></tr>
+        </tbody>
+      </table>
+    </section>
+  `;
+}
+
+async function loadKsoDecisionModel() {
+  if (!ksoDecisionModel) {
+    return;
+  }
+
+  try {
+    const result = await fetchMiniAppJson('/api/miniapp/kso-decision/model');
+    renderKsoDecisionModel(result.model);
+    setStatus(ksoDecisionStatus, '', '');
+  } catch (error) {
+    setStatus(ksoDecisionStatus, error.message, 'error');
+  }
+}
+
+function renderKsoDecisionPreview(preview) {
+  if (!ksoDecisionPreview || !preview) {
+    return;
+  }
+
+  const assignmentRows = (preview.assignments || []).map((assignment) => {
+    const employees = (assignment.employees || []).map((employee) => `
+      <tr>
+        <td>${employee.fio}</td>
+        <td>${employee.level || '-'}</td>
+        <td>${employee.rs}</td>
+        <td>${employee.ps}</td>
+      </tr>
+    `).join('');
+
+    return `
+      <section class="decision-card">
+        <h3>${assignment.shop} · Ks ${assignment.ks}</h3>
+        <table>
+          <thead><tr><th>Сотрудник</th><th>Уровень</th><th>Rs</th><th>Ps</th></tr></thead>
+          <tbody>${employees}</tbody>
+        </table>
+      </section>
+    `;
+  }).join('');
+  const reserve = (preview.reserve || []).map((employee) => `${employee.fio} (Ps ${employee.ps})`).join(', ') || 'нет';
+  const warnings = (preview.warnings || []).map((warning) => `<li>${warning}</li>`).join('');
+
+  ksoDecisionPreview.classList.remove('hidden');
+  ksoDecisionPreview.innerHTML = `
+    <section class="decision-card">
+      <h3>Preview на ${preview.date}</h3>
+      <p>Работает: ${preview.availableCount}</p>
+      <p>Резерв: ${reserve}</p>
+    </section>
+    ${warnings ? `<section class="decision-card warning"><h3>Предупреждения</h3><ul>${warnings}</ul></section>` : ''}
+    ${assignmentRows || '<section class="decision-card"><h3>Назначений нет</h3></section>'}
+  `;
+}
+
+async function handleKsoDecisionPreviewSubmit(event) {
+  event.preventDefault();
+  const button = ksoDecisionPreviewForm.querySelector('.primary-btn');
+  setStatus(ksoDecisionStatus, 'Считаю preview...', '');
+  button.disabled = true;
+
+  try {
+    const params = new URLSearchParams({ date: ksoDecisionPreviewForm.date.value });
+    const result = await fetchMiniAppJson(`/api/miniapp/kso-decision/preview?${params.toString()}`);
+    renderKsoDecisionPreview(result.preview);
+    setStatus(ksoDecisionStatus, 'Preview рассчитан без записи в таблицу.', 'success');
+  } catch (error) {
+    setStatus(ksoDecisionStatus, error.message, 'error');
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function initTabs() {
   document.querySelectorAll('.tab').forEach((button) => {
     button.addEventListener('click', () => {
@@ -716,12 +918,16 @@ async function init() {
   document.querySelectorAll('.simple-form [name="date"]').forEach((input) => {
     input.value = todayRu();
   });
+  if (ksoDecisionPreviewForm?.date) {
+    ksoDecisionPreviewForm.date.value = todayRu();
+  }
 
   addEvent();
   renderPhotos();
   initTabs();
   initMenuReturn();
   loadRecentFixations().catch(() => {});
+  loadKsoDecisionModel().catch(() => {});
 
   fixationForm.regionId.addEventListener('change', () => {
     updateShopSelect();
@@ -745,9 +951,20 @@ async function init() {
     setStatus(fixationStatus, '', '');
   });
   fixationForm.addEventListener('submit', handleFixationSubmit);
-  document.querySelectorAll('.simple-form').forEach((form) => {
+  document.querySelectorAll('.simple-form[data-report-endpoint]').forEach((form) => {
     form.addEventListener('submit', handleSimpleReportSubmit);
   });
+
+  ksoScheduleForm?.querySelectorAll('[data-kso-status]').forEach((button) => {
+    button.addEventListener('click', () => setKsoScheduleStatus(button.dataset.ksoStatus));
+  });
+  ksoScheduleForm?.date.addEventListener('input', renderKsoScheduleConfirm);
+  ksoScheduleTodayBtn?.addEventListener('click', () => {
+    ksoScheduleForm.date.value = todayRu();
+    renderKsoScheduleConfirm();
+  });
+  ksoScheduleForm?.addEventListener('submit', handleKsoScheduleSubmit);
+  ksoDecisionPreviewForm?.addEventListener('submit', handleKsoDecisionPreviewSubmit);
 
   photoDrop?.addEventListener('click', (event) => {
     event.currentTarget.focus();
