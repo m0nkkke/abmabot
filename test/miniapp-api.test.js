@@ -303,6 +303,31 @@ describe('miniapp API smoke', () => {
     }
   });
 
+  test('accepts signed MAX initData without bot token by default for allowed users', async () => {
+    process.env.MINIAPP_AUTH_REQUIRED = 'true';
+    process.env.MINIAPP_REQUIRE_MAX_INIT_DATA = 'true';
+    delete process.env.MINIAPP_ALLOW_MAX_INIT_AUTH;
+    saveEmployee('67890', 'Default Max User', null, true);
+    const initData = signMaxInitData({
+      auth_date: '1710000000',
+      user: JSON.stringify({ id: 67890, first_name: 'Default', last_name: 'User' })
+    }, 'test-max-token');
+    const server = createTestServer();
+
+    try {
+      const { response, body } = await requestJson(server.baseUrl, '/api/miniapp/bootstrap', {
+        headers: {
+          'X-Max-WebApp-Data': initData
+        }
+      });
+
+      assert.equal(response.status, 200);
+      assert.equal(body.user.userId, '67890');
+    } finally {
+      await server.close();
+    }
+  });
+
   test('validates simple report payload without writing to sheets', async () => {
     const server = createTestServer();
 

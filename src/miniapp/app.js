@@ -87,8 +87,13 @@ function escapeHtml(value) {
 
 function initAuthToken() {
   const params = new URLSearchParams(window.location.search);
+  const hashParams = new URLSearchParams(String(window.location.hash || '').replace(/^#/, ''));
   const token = params.get('token')
+    || hashParams.get('token')
     || params.get('WebAppStartParam')
+    || hashParams.get('WebAppStartParam')
+    || params.get('start_param')
+    || hashParams.get('start_param')
     || getMaxStartParam()
     || sessionStorage.getItem('miniappToken')
     || '';

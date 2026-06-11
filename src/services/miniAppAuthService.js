@@ -19,7 +19,7 @@ function isMaxInitDataRequired() {
 }
 
 function isMaxInitDataAuthAllowed() {
-  return String(process.env.MINIAPP_ALLOW_MAX_INIT_AUTH || '').toLowerCase() === 'true';
+  return String(process.env.MINIAPP_ALLOW_MAX_INIT_AUTH || 'true').toLowerCase() !== 'false';
 }
 
 function getMiniAppSessionTtlMs() {
