@@ -1256,11 +1256,22 @@ async function handleCallback(update, chatId, userId, session) {
         const currentSession = getSession(userId);
         const profile = getProfile(userId);
 
+        if (currentSession?.state === STATES.SAVING_FIXATION) {
+            await sendMessage(chatId, 'Сохранение уже выполняется. Пожалуйста, дождитесь результата.');
+            return;
+        }
+
+        if (currentSession?.state === STATES.IDLE) {
+            return;
+        }
+
         if (!profile || !currentSession || currentSession.state !== STATES.CONFIRM) {
             await sendMessage(chatId, 'Данные для сохранения не найдены. Начнём заново.');
             await startFlow(chatId, userId);
             return;
         }
+
+        saveSession(userId, STATES.SAVING_FIXATION, currentSession.data);
 
         try {
             await sendCleanupMessage(chatId, userId, 'Сохраняю данные в Google Sheets, пожалуйста подождите...');
@@ -1295,6 +1306,7 @@ async function handleCallback(update, chatId, userId, session) {
             );
         } catch (error) {
             logError('Не удалось сохранить данные в Google Sheets:', error);
+            saveSession(userId, STATES.CONFIRM, currentSession.data);
             await sendMessage(chatId, 'Не удалось записать данные в Google Sheets. Попробуйте подтвердить ещё раз позже.');
         }
         return;
@@ -1702,6 +1714,10 @@ async function handleText(update, chatId, userId, session) {
 
         case STATES.CONFIRM:
             await sendMessage(chatId, 'Подтвердите сохранение кнопкой или начните заново.');
+            return;
+
+        case STATES.SAVING_FIXATION:
+            await sendMessage(chatId, 'Сохранение уже выполняется. Пожалуйста, дождитесь результата.');
             return;
 
         default:
