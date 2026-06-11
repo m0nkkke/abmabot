@@ -244,7 +244,7 @@ describe('miniapp API smoke', () => {
     assert.equal(validateMaxWebAppInitData(initData.replace('payload-token', 'other-token'), 'test-max-token'), null);
   });
 
-  test('requires signed MAX initData when enabled', async () => {
+  test('accepts valid miniapp token when signed MAX initData is missing', async () => {
     process.env.MINIAPP_AUTH_REQUIRED = 'true';
     process.env.MINIAPP_REQUIRE_MAX_INIT_DATA = 'true';
     const login = createMiniAppLogin('12345');
@@ -257,7 +257,7 @@ describe('miniapp API smoke', () => {
     const server = createTestServer();
 
     try {
-      const denied = await requestJson(server.baseUrl, '/api/miniapp/bootstrap', {
+      const tokenOnly = await requestJson(server.baseUrl, '/api/miniapp/bootstrap', {
         headers: {
           Authorization: `Bearer ${login.token}`
         }
@@ -269,9 +269,37 @@ describe('miniapp API smoke', () => {
         }
       });
 
-      assert.equal(denied.response.status, 401);
+      assert.equal(tokenOnly.response.status, 200);
+      assert.equal(tokenOnly.body.user.userId, '12345');
       assert.equal(accepted.response.status, 200);
       assert.equal(accepted.body.user.userId, '12345');
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('rejects miniapp token when signed MAX initData belongs to another user', async () => {
+    process.env.MINIAPP_AUTH_REQUIRED = 'true';
+    process.env.MINIAPP_REQUIRE_MAX_INIT_DATA = 'true';
+    const login = createMiniAppLogin('12345');
+    const initData = signMaxInitData({
+      auth_date: '1771409719',
+      query_id: 'query-mismatch',
+      user: JSON.stringify({ id: 67890, first_name: 'Other', last_name: 'User' })
+    }, 'test-max-token');
+    const server = createTestServer();
+
+    try {
+      const { response, body } = await requestJson(server.baseUrl, '/api/miniapp/bootstrap', {
+        headers: {
+          Authorization: `Bearer ${login.token}`,
+          'X-Max-WebApp-Data': initData
+        }
+      });
+
+      assert.equal(response.status, 401);
+      assert.equal(body.ok, false);
+      assert.match(body.error, /не соответствует/i);
     } finally {
       await server.close();
     }

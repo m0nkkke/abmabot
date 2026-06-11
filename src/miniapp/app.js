@@ -117,6 +117,19 @@ function getMaxStartParam() {
   return startParam.token || startParam.payload || '';
 }
 
+async function waitForMaxWebAppData() {
+  if (window.WebApp?.initData || window.WebApp?.initDataUnsafe?.start_param) {
+    return;
+  }
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (window.WebApp?.initData || window.WebApp?.initDataUnsafe?.start_param) {
+      return;
+    }
+  }
+}
+
 async function fetchMiniAppJson(url, options = {}) {
   const headers = new Headers(options.headers || {});
 
@@ -1097,6 +1110,8 @@ function initMenuReturn() {
 }
 
 async function init() {
+  initAuthToken();
+  await waitForMaxWebAppData();
   initAuthToken();
   state.config = await fetchMiniAppJson('/api/miniapp/bootstrap');
   state.profile = state.config.user?.profile || null;

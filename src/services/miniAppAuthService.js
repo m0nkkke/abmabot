@@ -172,6 +172,25 @@ function miniAppAuthMiddleware(req, res, next) {
   }
 
   const maxInitData = validateMaxWebAppInitData(extractMaxInitData(req));
+  const session = validateMiniAppToken(extractMiniAppToken(req));
+  const maxUserId = maxInitData?.user?.id ? String(maxInitData.user.id) : null;
+
+  if (session) {
+    if (isMaxInitDataRequired() && maxUserId && maxUserId !== String(session.userId)) {
+      res.status(401).json({
+        ok: false,
+        error: 'Сессия mini-app не соответствует пользователю MAX'
+      });
+      return;
+    }
+
+    req.miniAppSession = session;
+    req.miniAppUserId = session.userId;
+    req.maxWebAppData = maxInitData;
+    next();
+    return;
+  }
+
   if (isMaxInitDataRequired() && !maxInitData) {
     res.status(401).json({
       ok: false,
@@ -180,37 +199,18 @@ function miniAppAuthMiddleware(req, res, next) {
     return;
   }
 
-  const session = validateMiniAppToken(extractMiniAppToken(req));
-  if (!session) {
-    const maxUserId = maxInitData?.user?.id ? String(maxInitData.user.id) : null;
-    if (isMaxInitDataAuthAllowed() && maxUserId && isAllowedUser(maxUserId)) {
-      req.miniAppSession = null;
-      req.miniAppUserId = maxUserId;
-      req.maxWebAppData = maxInitData;
-      next();
-      return;
-    }
-
-    res.status(401).json({
-      ok: false,
-      error: 'Требуется открыть mini-app через бота'
-    });
+  if (isMaxInitDataAuthAllowed() && maxUserId && isAllowedUser(maxUserId)) {
+    req.miniAppSession = null;
+    req.miniAppUserId = maxUserId;
+    req.maxWebAppData = maxInitData;
+    next();
     return;
   }
 
-  const maxUserId = maxInitData?.user?.id ? String(maxInitData.user.id) : null;
-  if (isMaxInitDataRequired() && maxUserId && maxUserId !== String(session.userId)) {
-    res.status(401).json({
-      ok: false,
-      error: 'Сессия mini-app не соответствует пользователю MAX'
-    });
-    return;
-  }
-
-  req.miniAppSession = session;
-  req.miniAppUserId = session.userId;
-  req.maxWebAppData = maxInitData;
-  next();
+  res.status(401).json({
+    ok: false,
+    error: 'Требуется открыть mini-app через бота'
+  });
 }
 
 function runMiniAppSessionCleanup() {

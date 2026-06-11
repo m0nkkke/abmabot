@@ -260,10 +260,13 @@ function buildMiniAppOpenAttachments(login) {
 
     return inlineKeyboard([
         [openButton],
+        maxWebApp ? [
+            { text: 'Открыть по ссылке', type: 'link', url: login.url }
+        ] : [],
         [
             { text: 'Отмена', type: 'callback', payload: 'main_menu' }
         ]
-    ]);
+    ].filter((row) => row.length > 0));
 }
 
 function buildBroadcastConfirmAttachments() {
