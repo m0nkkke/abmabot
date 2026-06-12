@@ -9,7 +9,8 @@ const {
   listEmployees,
   listKsoScheduleRequests,
   reviewKsoScheduleRequest,
-  saveKsoScheduleRequest
+  saveKsoScheduleRequest,
+  updateApprovedKsoScheduleRequest
 } = require('../db');
 const { sendMessageToUser } = require('../maxClient');
 const {
@@ -403,9 +404,40 @@ async function archiveRejectedKsoScheduleRequest(data, req) {
   };
 }
 
+async function updateApprovedKsoScheduleMonth(data, req) {
+  const reviewerId = assertReviewer(req);
+  const requestId = normalizeText(data.requestId);
+  if (!requestId || !Array.isArray(data.entries)) {
+    throw createValidationError('Укажите согласованный график и дни');
+  }
+
+  const existing = getKsoScheduleRequest(requestId);
+  if (!existing || existing.status !== 'approved' || existing.requestType === 'removal') {
+    throw createValidationError('Можно редактировать только согласованный график месяца', 404);
+  }
+
+  const entries = normalizeScheduleEntries({
+    month: existing.month,
+    entries: data.entries
+  });
+  const updated = updateApprovedKsoScheduleRequest(requestId, reviewerId, entries, normalizeText(data.comment));
+  if (!updated) {
+    throw createValidationError('Согласованный график не найден или уже недоступен', 404);
+  }
+
+  await updateScheduleMonth(reviewerId, { fio: updated.fio }, updated.entries);
+  await notifyScheduleApplicant(updated, 'approved', scheduleWasEdited(existing.entries, updated.entries));
+
+  return {
+    request: serializeRequest(updated),
+    message: 'Согласованный график обновлен, сотрудник уведомлен.'
+  };
+}
+
 module.exports = {
   approveKsoScheduleRequest,
   archiveRejectedKsoScheduleRequest,
+  updateApprovedKsoScheduleMonth,
   createKsoScheduleMonth,
   createKsoScheduleStatus,
   getKsoScheduleMonth,

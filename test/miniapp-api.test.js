@@ -605,6 +605,47 @@ describe('miniapp API smoke', () => {
     }
   });
 
+  test('validates manual edits of approved KSO schedule before writing to sheets', async () => {
+    process.env.MINIAPP_AUTH_REQUIRED = 'true';
+    const requestId = `approved-edit-request-${Date.now()}`;
+    saveEmployee('approved-edit-admin', 'Approved Edit Admin', null, true, null, ROLES.ADMIN);
+    saveKsoScheduleRequest({
+      id: requestId,
+      userId: 'approved-edit-user',
+      fio: 'Approved Edit User',
+      month: '2026-06',
+      requestType: 'month',
+      status: 'approved',
+      entries: [
+        { isoDate: '2026-06-01', hours: 10 }
+      ]
+    });
+    const adminLogin = createMiniAppLogin('approved-edit-admin');
+    const server = createTestServer();
+
+    try {
+      const { response, body } = await requestJson(server.baseUrl, '/api/miniapp/kso-schedule/update-approved', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminLogin.token}`
+        },
+        body: JSON.stringify({
+          requestId,
+          entries: [
+            { date: '2026-07-01', hours: 10 }
+          ]
+        })
+      });
+
+      assert.equal(response.status, 400);
+      assert.equal(body.ok, false);
+      assert.match(body.error, /даты|месяцу/i);
+    } finally {
+      await server.close();
+    }
+  });
+
   test('serves KSO decision model', async () => {
     const server = createTestServer();
 

@@ -1143,7 +1143,7 @@ function renderKsoScheduleReviewPanel() {
   ksoScheduleReviewPanel.classList.remove('hidden');
   const selected = state.ksoScheduleReviewDays.filter((day) => day.selected);
   const totalHours = selected.reduce((sum, day) => sum + normalizeHours(day.hours, 0), 0);
-  const canEdit = request.status === 'submitted' && request.requestType !== 'removal';
+  const canEdit = request.requestType !== 'removal' && ['submitted', 'approved'].includes(request.status);
   const calendar = state.ksoScheduleReviewDays.map((day, index) => `
     <article class="schedule-day${day.selected ? ' active' : ''}${day.removalTarget ? ' removal-target' : ''}">
       <label>
@@ -1167,6 +1167,9 @@ function renderKsoScheduleReviewPanel() {
           <button class="secondary-btn" type="button" data-review-action="rejected">Отклонить</button>
           <button class="primary-btn" type="button" data-review-action="approved">Сохранить в график</button>
         </div>
+      ` : ''}
+      ${request.status === 'approved' && request.requestType !== 'removal' ? `
+        <button class="primary-btn" type="button" data-update-approved>Сохранить изменения</button>
       ` : ''}
     </section>
   `;
@@ -1214,6 +1217,25 @@ function renderKsoScheduleReviewPanel() {
         setStatus(status, error.message, 'error');
       }
     });
+  });
+  ksoScheduleReviewPanel.querySelector('[data-update-approved]')?.addEventListener('click', async () => {
+    const status = ksoScheduleForm.querySelector('.status');
+    try {
+      const result = await submitJson('/api/miniapp/kso-schedule/update-approved', {
+        requestId: request.id,
+        entries: state.ksoScheduleReviewDays.map((day) => ({
+          date: day.date,
+          hours: day.selected ? normalizeHours(day.hours) : 0
+        }))
+      });
+      setStatus(status, result.message, 'success');
+      state.ksoScheduleReviewRequestId = result.request?.id || request.id;
+      state.ksoScheduleReviewDays = buildKsoScheduleReviewDays(result.request || request);
+      await loadKsoScheduleRequests();
+      await loadKsoScheduleMonth();
+    } catch (error) {
+      setStatus(status, error.message, 'error');
+    }
   });
 }
 

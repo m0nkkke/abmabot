@@ -20,7 +20,8 @@ const {
   createKsoScheduleStatus,
   getKsoScheduleMonth,
   getKsoScheduleTable,
-  listKsoScheduleRequestItems
+  listKsoScheduleRequestItems,
+  updateApprovedKsoScheduleMonth
 } = require('./services/ksoScheduleService');
 const { getKsoDecisionModel } = require('./services/ksoDecisionService');
 const {
@@ -138,6 +139,7 @@ postAction('/kso-schedule', createKsoScheduleStatus);
 postAction('/kso-schedule/month', createKsoScheduleMonth);
 postAction('/kso-schedule/review', approveKsoScheduleRequest);
 postAction('/kso-schedule/archive', archiveRejectedKsoScheduleRequest);
+postAction('/kso-schedule/update-approved', updateApprovedKsoScheduleMonth);
 postAction(['/tech', '/tech-report'], createTechReport);
 
 router.use((error, req, res, next) => {
