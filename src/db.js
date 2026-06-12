@@ -111,7 +111,8 @@ db.exec(`
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     submitted_at DATETIME,
     reviewed_at DATETIME,
-    reviewed_by TEXT
+    reviewed_by TEXT,
+    archived_at DATETIME
   );
 `);
 
@@ -123,6 +124,11 @@ if (!employeeColumns.includes('role')) {
 const profileColumns = db.pragma('table_info(profiles)').map((column) => column.name);
 if (!profileColumns.includes('region')) {
   db.exec("ALTER TABLE profiles ADD COLUMN region TEXT NOT NULL DEFAULT ''");
+}
+
+const ksoScheduleRequestColumns = db.pragma('table_info(kso_schedule_requests)').map((column) => column.name);
+if (!ksoScheduleRequestColumns.includes('archived_at')) {
+  db.exec('ALTER TABLE kso_schedule_requests ADD COLUMN archived_at DATETIME');
 }
 
 const getProfileStmt = db.prepare('SELECT user_id, fio, region, shop, created_at FROM profiles WHERE user_id = ?');
@@ -188,15 +194,17 @@ const updateKsoScheduleRequestStmt = db.prepare(`
   WHERE id = @id
     AND user_id = @userId
     AND status IN ('draft', 'rejected')
+    AND archived_at IS NULL
 `);
 const getKsoScheduleRequestStmt = db.prepare(`
-  SELECT id, user_id, fio, month, request_type, status, entries, comment, created_at, updated_at, submitted_at, reviewed_at, reviewed_by
+  SELECT id, user_id, fio, month, request_type, status, entries, comment, created_at, updated_at, submitted_at, reviewed_at, reviewed_by, archived_at
   FROM kso_schedule_requests
   WHERE id = ?
 `);
 const listKsoScheduleRequestsStmt = db.prepare(`
-  SELECT id, user_id, fio, month, request_type, status, entries, comment, created_at, updated_at, submitted_at, reviewed_at, reviewed_by
+  SELECT id, user_id, fio, month, request_type, status, entries, comment, created_at, updated_at, submitted_at, reviewed_at, reviewed_by, archived_at
   FROM kso_schedule_requests
+  WHERE archived_at IS NULL
   ORDER BY updated_at DESC
   LIMIT ?
 `);
@@ -210,6 +218,14 @@ const reviewKsoScheduleRequestStmt = db.prepare(`
       comment = COALESCE(@comment, comment)
   WHERE id = @id
     AND status = 'submitted'
+`);
+const archiveKsoScheduleRequestStmt = db.prepare(`
+  UPDATE kso_schedule_requests
+  SET archived_at = CURRENT_TIMESTAMP,
+      updated_at = CURRENT_TIMESTAMP
+  WHERE id = @id
+    AND status = 'rejected'
+    AND archived_at IS NULL
 `);
 
 const getConsentStmt = db.prepare('SELECT user_id, policy_version, text, accepted_at FROM consents WHERE user_id = ?');
@@ -518,7 +534,8 @@ function parseKsoScheduleRequest(row) {
     updatedAt: row.updated_at,
     submittedAt: row.submitted_at,
     reviewedAt: row.reviewed_at,
-    reviewedBy: row.reviewed_by
+    reviewedBy: row.reviewed_by,
+    archivedAt: row.archived_at
   };
 }
 
@@ -568,6 +585,11 @@ function reviewKsoScheduleRequest(id, status, reviewedBy, comment = '', entries 
   });
 
   return result.changes > 0 ? getKsoScheduleRequest(id) : null;
+}
+
+function archiveKsoScheduleRequest(id) {
+  const result = archiveKsoScheduleRequestStmt.run({ id: String(id) });
+  return result.changes > 0;
 }
 
 function getConsent(userId) {
@@ -818,6 +840,7 @@ module.exports = {
   getKsoScheduleRequest,
   listKsoScheduleRequests,
   reviewKsoScheduleRequest,
+  archiveKsoScheduleRequest,
   getConsent,
   saveConsent,
   deleteConsent,

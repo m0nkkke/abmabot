@@ -14,6 +14,7 @@ const {
   createTextReport
 } = require('./services/reportService');
 const {
+  archiveRejectedKsoScheduleRequest,
   approveKsoScheduleRequest,
   createKsoScheduleMonth,
   createKsoScheduleStatus,
@@ -136,6 +137,7 @@ postAction(['/kso', '/kso-report'], createKsoReport);
 postAction('/kso-schedule', createKsoScheduleStatus);
 postAction('/kso-schedule/month', createKsoScheduleMonth);
 postAction('/kso-schedule/review', approveKsoScheduleRequest);
+postAction('/kso-schedule/archive', archiveRejectedKsoScheduleRequest);
 postAction(['/tech', '/tech-report'], createTechReport);
 
 router.use((error, req, res, next) => {

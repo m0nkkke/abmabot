@@ -4,7 +4,7 @@ const { after, beforeEach, describe, test } = require('node:test');
 const express = require('express');
 const { ROLES } = require('../src/constants');
 const { miniAppApiRouter } = require('../src/miniapp');
-const { saveEmployee, saveProfile } = require('../src/db');
+const { saveEmployee, saveKsoScheduleRequest, saveProfile } = require('../src/db');
 const { buildBonusSummary } = require('../src/services/bonusService');
 const { createMiniAppLogin, validateMaxWebAppInitData } = require('../src/services/miniAppAuthService');
 
@@ -556,6 +556,50 @@ describe('miniapp API smoke', () => {
       assert.equal(response.status, 400);
       assert.equal(body.ok, false);
       assert.match(body.error, /даты|месяцу/i);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('archives rejected KSO schedule requests', async () => {
+    process.env.MINIAPP_AUTH_REQUIRED = 'true';
+    const requestId = `archive-rejected-request-${Date.now()}`;
+    saveEmployee('archive-admin', 'Archive Admin', null, true, null, ROLES.ADMIN);
+    saveKsoScheduleRequest({
+      id: requestId,
+      userId: 'archive-user',
+      fio: 'Archive User',
+      month: '2026-06',
+      requestType: 'month',
+      status: 'rejected',
+      entries: [
+        { isoDate: '2026-06-01', hours: 10 }
+      ]
+    });
+    const adminLogin = createMiniAppLogin('archive-admin');
+    const server = createTestServer();
+
+    try {
+      const archived = await requestJson(server.baseUrl, '/api/miniapp/kso-schedule/archive', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminLogin.token}`
+        },
+        body: JSON.stringify({ requestId })
+      });
+
+      assert.equal(archived.response.status, 200);
+      assert.equal(archived.body.ok, true);
+
+      const listed = await requestJson(server.baseUrl, '/api/miniapp/kso-schedule/requests', {
+        headers: {
+          Authorization: `Bearer ${adminLogin.token}`
+        }
+      });
+
+      assert.equal(listed.response.status, 200);
+      assert.equal(listed.body.requests.some((request) => request.id === requestId), false);
     } finally {
       await server.close();
     }

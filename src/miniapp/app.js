@@ -35,6 +35,7 @@ const ksoScheduleCalendar = document.querySelector('#ksoScheduleCalendar');
 const ksoScheduleDraftBtn = document.querySelector('#ksoScheduleDraftBtn');
 const ksoScheduleApplyRangeBtn = document.querySelector('#ksoScheduleApplyRangeBtn');
 const ksoScheduleRemoveTomorrowBtn = document.querySelector('#ksoScheduleRemoveTomorrowBtn');
+const ksoScheduleApprovedPanel = document.querySelector('#ksoScheduleApprovedPanel');
 const ksoScheduleRequests = document.querySelector('#ksoScheduleRequests');
 const ksoScheduleReviewPanel = document.querySelector('#ksoScheduleReviewPanel');
 const ksoScheduleTableWrap = document.querySelector('#ksoScheduleTableWrap');
@@ -1079,9 +1080,32 @@ function requestTypeText(type) {
   return type === 'removal' ? 'Снятие смены' : 'График месяца';
 }
 
+function getKsoRequestEntryDate(entry) {
+  return entry?.isoDate || entry?.date || '';
+}
+
+function getKsoApprovedScheduleRequest(userId, month) {
+  return (state.ksoScheduleRequests || [])
+    .filter((request) => (
+      request.status === 'approved'
+      && request.requestType !== 'removal'
+      && request.month === month
+      && String(request.userId || '') === String(userId || '')
+    ))
+    .sort((a, b) => String(b.reviewedAt || b.updatedAt || '').localeCompare(String(a.reviewedAt || a.updatedAt || '')))[0];
+}
+
+function getKsoRemovalDate(request) {
+  return getKsoRequestEntryDate((request?.entries || [])[0]);
+}
+
 function buildKsoScheduleReviewDays(request) {
   const totalDays = daysInMonth(request?.month);
-  const entriesByDate = new Map((request?.entries || []).map((entry) => [entry.isoDate || entry.date, entry]));
+  const sourceRequest = request?.requestType === 'removal'
+    ? getKsoApprovedScheduleRequest(request.userId, request.month) || request
+    : request;
+  const removalDate = request?.requestType === 'removal' ? getKsoRemovalDate(request) : '';
+  const entriesByDate = new Map((sourceRequest?.entries || []).map((entry) => [getKsoRequestEntryDate(entry), entry]));
 
   return Array.from({ length: totalDays }, (_, index) => {
     const day = index + 1;
@@ -1093,7 +1117,8 @@ function buildKsoScheduleReviewDays(request) {
       date,
       day,
       selected: hours > 0,
-      hours: hours > 0 ? hours : 10
+      hours: hours > 0 ? hours : 10,
+      removalTarget: date === removalDate
     };
   });
 }
@@ -1120,12 +1145,13 @@ function renderKsoScheduleReviewPanel() {
   const totalHours = selected.reduce((sum, day) => sum + normalizeHours(day.hours, 0), 0);
   const canEdit = request.status === 'submitted' && request.requestType !== 'removal';
   const calendar = state.ksoScheduleReviewDays.map((day, index) => `
-    <article class="schedule-day${day.selected ? ' active' : ''}">
+    <article class="schedule-day${day.selected ? ' active' : ''}${day.removalTarget ? ' removal-target' : ''}">
       <label>
         <input type="checkbox" data-review-day="${index}" ${day.selected ? 'checked' : ''} ${canEdit ? '' : 'disabled'}>
         <span>${day.day} · ${weekdayShort(day.date)}</span>
       </label>
       <input type="number" min="1" max="24" step="0.5" value="${day.hours}" data-review-hours="${index}" ${day.selected && canEdit ? '' : 'disabled'}>
+      ${day.removalTarget ? '<strong class="schedule-marker">Снятие смены</strong>' : ''}
     </article>
   `).join('');
 
@@ -1203,6 +1229,43 @@ function openKsoScheduleReviewRequest(requestId) {
   renderKsoScheduleReviewPanel();
 }
 
+function renderKsoApprovedSchedulePanel() {
+  if (!ksoScheduleApprovedPanel || !ksoScheduleForm) {
+    return;
+  }
+
+  const userId = state.config?.user?.userId || '';
+  const month = ksoScheduleForm.month.value || currentMonthInput();
+  const request = getKsoApprovedScheduleRequest(userId, month);
+  if (!request) {
+    ksoScheduleApprovedPanel.classList.add('hidden');
+    ksoScheduleApprovedPanel.innerHTML = '';
+    return;
+  }
+
+  const days = buildKsoScheduleReviewDays(request);
+  const selected = days.filter((day) => day.selected);
+  const totalHours = selected.reduce((sum, day) => sum + normalizeHours(day.hours, 0), 0);
+  ksoScheduleApprovedPanel.classList.remove('hidden');
+  ksoScheduleApprovedPanel.innerHTML = `
+    <section class="decision-card schedule-review-card">
+      <h3>Мой утвержденный график · ${escapeHtml(request.month)}</h3>
+      <p>Рабочих дней: ${selected.length}, часов: ${totalHours}</p>
+      <div class="schedule-month-grid schedule-review-grid">
+        ${days.map((day) => `
+          <article class="schedule-day${day.selected ? ' active' : ''}">
+            <label>
+              <input type="checkbox" ${day.selected ? 'checked' : ''} disabled>
+              <span>${day.day} · ${weekdayShort(day.date)}</span>
+            </label>
+            <input type="number" value="${day.selected ? day.hours : ''}" disabled>
+          </article>
+        `).join('')}
+      </div>
+    </section>
+  `;
+}
+
 function renderKsoScheduleRequests(requests) {
   if (!ksoScheduleRequests) {
     return;
@@ -1211,52 +1274,50 @@ function renderKsoScheduleRequests(requests) {
   const visible = (requests || []).slice(0, 12);
   if (!visible.length) {
     ksoScheduleRequests.innerHTML = '<section class="decision-card"><h3>Заявок пока нет</h3></section>';
+    renderKsoApprovedSchedulePanel();
     return;
   }
 
   ksoScheduleRequests.innerHTML = visible.map((request) => `
     <section class="decision-card${request.id === state.ksoScheduleReviewRequestId ? ' selected' : ''}" data-request-id="${request.id}">
-      <h3>${request.fio} · ${request.month}</h3>
+      <h3>${escapeHtml(request.fio)} · ${escapeHtml(request.month)}</h3>
       <p>Тип: ${requestTypeText(request.requestType)}</p>
       <p>Статус: ${statusText(request.status)}</p>
       <p>Дней: ${request.workDays}, часов: ${request.totalHours}</p>
-      ${isCurrentUserReviewer() && request.status === 'submitted' ? `
-        <div class="two-cols">
-          <button class="secondary-btn" type="button" data-review-action="rejected">Отклонить</button>
-          <button class="primary-btn" type="button" data-review-action="approved">Сохранить в график</button>
-        </div>
+      ${isCurrentUserReviewer() ? '<p class="muted">Нажмите, чтобы открыть календарь заявки</p>' : ''}
+      ${isCurrentUserReviewer() && request.status === 'rejected' ? `
+        <button class="secondary-btn" type="button" data-archive-request>Скрыть отклоненную заявку</button>
       ` : ''}
     </section>
   `).join('');
 
-  ksoScheduleRequests.querySelectorAll('[data-review-action]').forEach((button) => {
-    button.addEventListener('click', async () => {
-      const card = button.closest('[data-request-id]');
-      const status = ksoScheduleForm.querySelector('.status');
-      try {
-        const result = await submitJson('/api/miniapp/kso-schedule/review', {
-          requestId: card.dataset.requestId,
-          action: button.dataset.reviewAction
-        });
-        setStatus(status, result.message, 'success');
-        await loadKsoScheduleRequests();
-        await loadKsoScheduleMonth();
-        await loadKsoScheduleTable();
-      } catch (error) {
-        setStatus(status, error.message, 'error');
-      }
-    });
-  });
   ksoScheduleRequests.querySelectorAll('[data-request-id]').forEach((card) => {
     card.addEventListener('click', (event) => {
-      if (event.target.closest('[data-review-action]')) {
+      if (event.target.closest('[data-archive-request]')) {
         return;
       }
 
       openKsoScheduleReviewRequest(card.dataset.requestId);
     });
   });
+  ksoScheduleRequests.querySelectorAll('[data-archive-request]').forEach((button) => {
+    button.addEventListener('click', async (event) => {
+      event.stopPropagation();
+      const card = button.closest('[data-request-id]');
+      const status = ksoScheduleForm.querySelector('.status');
+      try {
+        const result = await submitJson('/api/miniapp/kso-schedule/archive', {
+          requestId: card.dataset.requestId
+        });
+        setStatus(status, result.message, 'success');
+        await loadKsoScheduleRequests();
+      } catch (error) {
+        setStatus(status, error.message, 'error');
+      }
+    });
+  });
   renderKsoScheduleReviewPanel();
+  renderKsoApprovedSchedulePanel();
 }
 
 async function loadKsoScheduleRequests() {
@@ -1273,6 +1334,7 @@ async function loadKsoScheduleRequests() {
   }
   renderKsoScheduleRequests(state.ksoScheduleRequests);
   applyKsoScheduleDraftToCalendar();
+  renderKsoApprovedSchedulePanel();
 }
 
 function renderKsoScheduleTable(table) {
@@ -1353,7 +1415,11 @@ async function requestRemoveTomorrowShift() {
       entries: [{ date: tomorrow, hours: 0 }]
     });
     setStatus(status, result.message || 'Заявка на снятие смены отправлена.', 'success');
+    ksoScheduleForm.month.value = tomorrow.slice(0, 7);
+    await loadKsoScheduleMonth();
     await loadKsoScheduleRequests();
+    renderKsoApprovedSchedulePanel();
+    setStatus(status, result.message || 'Заявка на снятие смены отправлена.', 'success');
   } catch (error) {
     setStatus(status, error.message, 'error');
   }
@@ -1684,6 +1750,7 @@ async function init() {
       setStatus(ksoScheduleForm.querySelector('.status'), error.message, 'error');
     });
     renderKsoScheduleReviewPanel();
+    renderKsoApprovedSchedulePanel();
   });
   ksoScheduleForm?.querySelectorAll('[data-schedule-template]').forEach((button) => {
     button.addEventListener('click', () => applyKsoScheduleTemplate(button.dataset.scheduleTemplate));

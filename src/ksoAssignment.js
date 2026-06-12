@@ -6,6 +6,7 @@ const {
 } = require('./db');
 const {
   getKsoAssignmentSheetData,
+  getKsoScheduleSheetRows,
   initializeKsoAssignmentSheet,
   writeKsoAssignmentResult,
   writeKsoManualAssignment,
@@ -19,6 +20,9 @@ const {
 
 const GOOGLE_SHEETS_ERROR_TEXT = 'Не удалось получить данные из таблицы. Попробуйте позже.';
 const CACHE_TTL_MS = 10 * 60 * 1000;
+const SCHEDULE_SUMMARY_CACHE_TTL_MS = Number(process.env.KSO_SCHEDULE_SUMMARY_CACHE_TTL_MS || 60 * 1000);
+const scheduleSummaryCache = new Map();
+const scheduleSummaryPending = new Map();
 
 const MONTH_NAMES = [
   'январь',
@@ -1015,6 +1019,7 @@ async function showWorkingEmployees(isoDate) {
 async function updateScheduleStatus(userId, profile, isoDate, status) {
   try {
     await writeKsoScheduleStatus(profile, isoDate, status, historySheetName(isoDate));
+    invalidateScheduleMonthSummary(isoDate);
     log('График КСО обновлен.', { userId, fio: profile.fio, isoDate, status });
     return `Готово: на ${formatDisplayDate(isoDate)} установлен статус ${status}.`;
   } catch (error) {
@@ -1026,6 +1031,7 @@ async function updateScheduleStatus(userId, profile, isoDate, status) {
 async function updateScheduleMonth(userId, profile, isoDateHours) {
   try {
     await writeKsoScheduleMonthHours(profile, isoDateHours, historySheetName(isoDateHours[0].isoDate));
+    invalidateScheduleMonthSummary(isoDateHours[0].isoDate);
     const totalHours = isoDateHours.reduce((sum, item) => sum + numberValue(item.hours, 0), 0);
     log('Месячный график КСО обновлен.', { userId, fio: profile.fio, days: isoDateHours.length, totalHours });
     return `Готово: график сохранен. Итого часов: ${totalHours}.`;
@@ -1036,18 +1042,52 @@ async function updateScheduleMonth(userId, profile, isoDateHours) {
 }
 
 async function getScheduleMonthSummary(isoDate) {
-  const data = await loadAssignmentData(isoDate);
-  const [headers = [], ...rows] = data.rawSchedule || [];
+  const cacheKey = isoDate.slice(0, 7);
+  const cached = scheduleSummaryCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value;
+  }
+
+  if (scheduleSummaryPending.has(cacheKey)) {
+    return scheduleSummaryPending.get(cacheKey);
+  }
+
+  const pending = (async () => {
+    try {
+      const [headers = [], ...rows] = await getKsoScheduleSheetRows();
+      const summary = buildScheduleMonthSummaryFromRows(isoDate, headers, rows);
+      scheduleSummaryCache.set(cacheKey, {
+        expiresAt: Date.now() + SCHEDULE_SUMMARY_CACHE_TTL_MS,
+        value: summary
+      });
+      return summary;
+    } catch (error) {
+      if (cached?.value) {
+        logError('Не удалось обновить сводку графика КСО, возвращаем кэш:', error);
+        return cached.value;
+      }
+
+      throw error;
+    } finally {
+      scheduleSummaryPending.delete(cacheKey);
+    }
+  })();
+
+  scheduleSummaryPending.set(cacheKey, pending);
+  return pending;
+}
+
+function buildScheduleMonthSummaryFromRows(isoDate, headers, rows) {
   const year = Number(isoDate.slice(0, 4));
   const month = Number(isoDate.slice(5, 7));
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  const employeesCount = rows.filter((row) => String(row[1] || row[2] || '').trim()).length;
+  const employeesCount = rows.filter((row) => String(row[1] || '').trim()).length;
 
   const days = Array.from({ length: lastDay }, (_, index) => {
     const day = index + 1;
     const date = formatIsoDate(new Date(Date.UTC(year, month - 1, day)));
     const columnIndex = headers.findIndex((header) => Number(header) === day);
-    const actualIndex = columnIndex >= 0 ? columnIndex : day + 2;
+    const actualIndex = columnIndex >= 0 ? columnIndex : day + 1;
     const workingCount = rows.reduce((count, row) => count + (numberValue(row[actualIndex], 0) > 0 ? 1 : 0), 0);
 
     return {
@@ -1065,6 +1105,14 @@ async function getScheduleMonthSummary(isoDate) {
   };
 }
 
+function invalidateScheduleMonthSummary(isoDate) {
+  if (!isoDate) {
+    return;
+  }
+
+  scheduleSummaryCache.delete(String(isoDate).slice(0, 7));
+}
+
 async function getScheduleMonthTable(isoDate) {
   const data = await loadAssignmentData(isoDate);
   const [headers = [], ...rows] = data.rawSchedule || [];
@@ -1078,14 +1126,14 @@ async function getScheduleMonthTable(isoDate) {
     month: isoDate.slice(0, 7),
     days,
     rows: rows
-      .filter((row) => String(row[1] || row[2] || '').trim())
+      .filter((row) => String(row[1] || '').trim())
       .map((row) => {
         const dayValues = {};
         let computedTotal = 0;
 
         days.forEach((day) => {
           const columnIndex = headers.findIndex((header) => Number(header) === day);
-          const actualIndex = columnIndex >= 0 ? columnIndex : day + 2;
+          const actualIndex = columnIndex >= 0 ? columnIndex : day + 1;
           const hours = numberValue(row[actualIndex], 0);
           dayValues[String(day)] = hours > 0 ? hours : '';
           computedTotal += hours;
@@ -1095,7 +1143,7 @@ async function getScheduleMonthTable(isoDate) {
 
         return {
           id: String(row[0] || '').trim(),
-          fio: String(row[1] || row[2] || '').trim(),
+          fio: String(row[1] || '').trim(),
           days: dayValues,
           total: tableTotal
         };

@@ -1,5 +1,7 @@
 const { ROLES } = require('../constants');
+const { logError } = require('../logger');
 const {
+  archiveKsoScheduleRequest,
   getProfile,
   getKsoScheduleRequest,
   getUserRole,
@@ -201,6 +203,19 @@ function requestTypeLabel(type) {
   return type === 'removal' ? 'Снятие смены' : 'График месяца';
 }
 
+function entriesSignature(entries) {
+  return JSON.stringify((entries || [])
+    .map((entry) => ({
+      isoDate: entry.isoDate || entry.date,
+      hours: normalizeNumber(entry.hours)
+    }))
+    .sort((left, right) => String(left.isoDate).localeCompare(String(right.isoDate))));
+}
+
+function scheduleWasEdited(before, after) {
+  return entriesSignature(before) !== entriesSignature(after);
+}
+
 async function notifyScheduleReviewers(request) {
   if (!request || request.status !== 'submitted') {
     return;
@@ -221,6 +236,41 @@ async function notifyScheduleReviewers(request) {
   ].join('\n');
 
   await Promise.allSettled(getReviewerIds().map((reviewerId) => sendMessageToUser(reviewerId, text)));
+}
+
+async function notifyScheduleApplicant(request, action, wasEdited = false) {
+  if (!request?.userId || request.userId === 'miniapp') {
+    return;
+  }
+
+  const totalHours = request.entries.reduce((sum, entry) => sum + normalizeNumber(entry.hours), 0);
+  const workDays = request.entries.filter((entry) => normalizeNumber(entry.hours) > 0).length;
+  const isRemoval = request.requestType === 'removal';
+  const title = action === 'approved'
+    ? isRemoval
+      ? 'Заявка на снятие смены согласована.'
+      : wasEdited
+        ? 'График согласован с изменениями.'
+        : 'График согласован.'
+    : isRemoval
+      ? 'Заявка на снятие смены отклонена.'
+      : 'График отклонен.';
+  const text = [
+    title,
+    '',
+    `Месяц: ${request.month}`,
+    `Тип: ${requestTypeLabel(request.requestType)}`,
+    `Дней: ${workDays}`,
+    `Часов: ${totalHours}`,
+    '',
+    action === 'approved'
+      ? 'Откройте miniapp -> График работы, чтобы посмотреть утвержденный график.'
+      : 'Откройте miniapp -> График работы, чтобы посмотреть статус заявки.'
+  ].join('\n');
+
+  await sendMessageToUser(request.userId, text).catch((error) => {
+    logError('Не удалось отправить уведомление по графику КСО:', error);
+  });
 }
 
 async function createKsoScheduleMonth(data, req) {
@@ -307,15 +357,15 @@ async function approveKsoScheduleRequest(data, req) {
     throw createValidationError('Укажите заявку и действие согласования');
   }
 
+  const existingRequest = getKsoScheduleRequest(requestId);
   let editedEntries = null;
   if (action === 'approved' && Array.isArray(data.entries)) {
-    const existing = getKsoScheduleRequest(requestId);
-    if (!existing || existing.status !== 'submitted') {
+    if (!existingRequest || existingRequest.status !== 'submitted') {
       throw createValidationError('Заявка не найдена или уже обработана', 404);
     }
 
     editedEntries = normalizeScheduleEntries({
-      month: existing.month,
+      month: existingRequest.month,
       entries: data.entries
     });
   }
@@ -328,6 +378,7 @@ async function approveKsoScheduleRequest(data, req) {
   if (action === 'approved') {
     await updateScheduleMonth(reviewerId, { fio: reviewed.fio }, reviewed.entries);
   }
+  await notifyScheduleApplicant(reviewed, action, editedEntries ? scheduleWasEdited(existingRequest?.entries, reviewed.entries) : false);
 
   return {
     request: serializeRequest(reviewed),
@@ -335,8 +386,26 @@ async function approveKsoScheduleRequest(data, req) {
   };
 }
 
+async function archiveRejectedKsoScheduleRequest(data, req) {
+  assertReviewer(req);
+  const requestId = normalizeText(data.requestId);
+  if (!requestId) {
+    throw createValidationError('Укажите заявку');
+  }
+
+  const archived = archiveKsoScheduleRequest(requestId);
+  if (!archived) {
+    throw createValidationError('Можно скрыть только отклоненную заявку, которая еще не скрыта', 404);
+  }
+
+  return {
+    message: 'Отклоненная заявка скрыта.'
+  };
+}
+
 module.exports = {
   approveKsoScheduleRequest,
+  archiveRejectedKsoScheduleRequest,
   createKsoScheduleMonth,
   createKsoScheduleStatus,
   getKsoScheduleMonth,
