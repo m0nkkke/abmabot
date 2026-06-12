@@ -1,7 +1,9 @@
 const { getProfile, isAllowedUser } = require('../db');
 const {
   formatDisplayDate,
+  getScheduleMonthSummary,
   parseInputDate,
+  updateScheduleMonth,
   updateScheduleStatus
 } = require('../ksoAssignment');
 
@@ -13,6 +15,44 @@ function createValidationError(message, statusCode = 400) {
 
 function normalizeText(value) {
   return String(value || '').trim();
+}
+
+function normalizeNumber(value) {
+  const parsed = Number(String(value ?? '').replace(',', '.'));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function parseIsoDate(value) {
+  const text = normalizeText(value);
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  if (!match) {
+    return '';
+  }
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (
+    date.getUTCFullYear() !== year
+    || date.getUTCMonth() !== month - 1
+    || date.getUTCDate() !== day
+  ) {
+    return '';
+  }
+
+  return text;
+}
+
+function parseMonth(value) {
+  const text = normalizeText(value);
+  const match = /^(\d{4})-(\d{2})$/.exec(text);
+  if (!match) {
+    return '';
+  }
+
+  const month = Number(match[2]);
+  return month >= 1 && month <= 12 ? text : '';
 }
 
 function normalizeScheduleStatus(value) {
@@ -75,7 +115,57 @@ async function createKsoScheduleStatus(data, req) {
   };
 }
 
+function normalizeScheduleEntries(data) {
+  const month = parseMonth(data.month);
+  const entries = Array.isArray(data.entries) ? data.entries : [];
+
+  if (!month || entries.length === 0) {
+    throw createValidationError('Выберите месяц и хотя бы один день графика');
+  }
+
+  return entries.map((entry) => {
+    const isoDate = parseIsoDate(entry.date);
+    if (!isoDate || isoDate.slice(0, 7) !== month) {
+      throw createValidationError('Все даты графика должны относиться к выбранному месяцу');
+    }
+
+    const hours = normalizeNumber(entry.hours);
+    if (hours < 0 || hours > 24) {
+      throw createValidationError('Количество часов должно быть от 0 до 24');
+    }
+
+    return {
+      isoDate,
+      hours: hours > 0 ? hours : ''
+    };
+  });
+}
+
+async function createKsoScheduleMonth(data, req) {
+  const entries = normalizeScheduleEntries(data);
+  const { userId, profile } = getMiniAppProfile(req, data);
+  const message = await updateScheduleMonth(userId || 'miniapp', profile, entries);
+
+  return {
+    message,
+    totalHours: entries.reduce((sum, entry) => sum + normalizeNumber(entry.hours), 0)
+  };
+}
+
+async function getKsoScheduleMonth(data) {
+  const month = parseMonth(data.month);
+  if (!month) {
+    throw createValidationError('Укажите месяц в формате ГГГГ-ММ');
+  }
+
+  return {
+    summary: await getScheduleMonthSummary(`${month}-01`)
+  };
+}
+
 module.exports = {
+  createKsoScheduleMonth,
   createKsoScheduleStatus,
+  getKsoScheduleMonth,
   normalizeScheduleStatus
 };

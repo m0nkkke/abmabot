@@ -447,6 +447,26 @@ describe('miniapp API smoke', () => {
     }
   });
 
+  test('validates KSO schedule month payload without writing to sheets', async () => {
+    const server = createTestServer();
+
+    try {
+      const { response, body } = await requestJson(server.baseUrl, '/api/miniapp/kso-schedule/month', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ month: 'bad', entries: [] })
+      });
+
+      assert.equal(response.status, 400);
+      assert.equal(body.ok, false);
+      assert.match(body.error, /месяц|день|графика/i);
+    } finally {
+      await server.close();
+    }
+  });
+
   test('serves KSO decision model', async () => {
     const server = createTestServer();
 

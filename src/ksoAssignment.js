@@ -9,6 +9,7 @@ const {
   initializeKsoAssignmentSheet,
   writeKsoAssignmentResult,
   writeKsoManualAssignment,
+  writeKsoScheduleMonthHours,
   writeKsoScheduleStatus
 } = require('./sheets');
 const {
@@ -409,6 +410,7 @@ function mergeDictionaries(sheetData, isoDate) {
     employees: parsedEmployees,
     shops: parsedShops,
     schedule: parseSchedule(sheetData.schedule, isoDate),
+    rawSchedule: sheetData.schedule,
     history: parseHistory(sheetData.history, isoDate),
     analytics: parseAnalytics(sheetData.analytics),
     storeComplexity: parseStoreComplexity(sheetData.storeComplexity),
@@ -423,6 +425,7 @@ function getDictionaries(sheetData, isoDate) {
       employees: dictionaryCache.employees,
       shops: dictionaryCache.shops,
       schedule: parseSchedule(sheetData.schedule, isoDate),
+      rawSchedule: sheetData.schedule,
       history: parseHistory(sheetData.history, isoDate),
       analytics: parseAnalytics(sheetData.analytics),
       storeComplexity: parseStoreComplexity(sheetData.storeComplexity),
@@ -457,6 +460,7 @@ function buildAvailableEmployees(data) {
       const historyRow = historyByKey.get(employeeKey(employee)) || historyByKey.get(normalizeFio(employee.fio));
       const analyticsRow = analyticsByFio.get(normalizeFio(employee.fio));
       const status = normalizeText(scheduleRow?.status || employee.status);
+      const scheduledHours = numberValue(scheduleRow?.status, 0);
       const lastHyper = getLastHyperDate(historyRow?.dates || [], analyticsRow?.lastHyper);
       const daysInRow = countHyperDaysInRow(historyRow?.dates || [], isoDateFromParts(lastHyper));
 
@@ -471,7 +475,8 @@ function buildAvailableEmployees(data) {
         points: analyticsRow?.points || 0,
         lastHyper,
         daysInRow,
-        isWorking: status === 'р' || status === 'работает' || status === 'рабочий'
+        scheduledHours,
+        isWorking: scheduledHours > 0 || status === 'р' || status === 'работает' || status === 'рабочий'
       };
     })
     .filter((employee) => employee.isWorking);
@@ -1018,6 +1023,48 @@ async function updateScheduleStatus(userId, profile, isoDate, status) {
   }
 }
 
+async function updateScheduleMonth(userId, profile, isoDateHours) {
+  try {
+    await writeKsoScheduleMonthHours(profile, isoDateHours, historySheetName(isoDateHours[0].isoDate));
+    const totalHours = isoDateHours.reduce((sum, item) => sum + numberValue(item.hours, 0), 0);
+    log('Месячный график КСО обновлен.', { userId, fio: profile.fio, days: isoDateHours.length, totalHours });
+    return `Готово: график сохранен. Итого часов: ${totalHours}.`;
+  } catch (error) {
+    logError('Не удалось обновить месячный график КСО:', error);
+    return GOOGLE_SHEETS_ERROR_TEXT;
+  }
+}
+
+async function getScheduleMonthSummary(isoDate) {
+  const data = await loadAssignmentData(isoDate);
+  const [headers = [], ...rows] = data.rawSchedule || [];
+  const year = Number(isoDate.slice(0, 4));
+  const month = Number(isoDate.slice(5, 7));
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const employeesCount = rows.filter((row) => String(row[1] || row[2] || '').trim()).length;
+
+  const days = Array.from({ length: lastDay }, (_, index) => {
+    const day = index + 1;
+    const date = formatIsoDate(new Date(Date.UTC(year, month - 1, day)));
+    const columnIndex = headers.findIndex((header) => Number(header) === day);
+    const actualIndex = columnIndex >= 0 ? columnIndex : day + 2;
+    const workingCount = rows.reduce((count, row) => count + (numberValue(row[actualIndex], 0) > 0 ? 1 : 0), 0);
+
+    return {
+      date,
+      day,
+      workingCount,
+      restCount: Math.max(0, employeesCount - workingCount)
+    };
+  });
+
+  return {
+    month: isoDate.slice(0, 7),
+    employeesCount,
+    days
+  };
+}
+
 async function applyManualAssignment(fio, shopCode, isoDate = todayIso()) {
   try {
     const data = await loadAssignmentData(isoDate);
@@ -1111,6 +1158,7 @@ module.exports = {
   GOOGLE_SHEETS_ERROR_TEXT,
   applyManualAssignment,
   formatDisplayDate,
+  getScheduleMonthSummary,
   historySheetName,
   initKsoAssignmentSheet,
   isPastDate,
@@ -1121,5 +1169,6 @@ module.exports = {
   showKsoAnalytics,
   showWorkingEmployees,
   todayIso,
+  updateScheduleMonth,
   updateScheduleStatus
 };

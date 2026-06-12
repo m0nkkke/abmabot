@@ -152,15 +152,17 @@
         <section class="panel" id="ksoSchedule" data-admin-only="true">
             <form class="simple-form" id="ksoScheduleForm">
                 <h2>График КСО</h2>
-                <input type="hidden" name="status" required>
-                <div class="segmented" role="radiogroup" aria-label="Статус графика КСО">
-                    <button class="segment-btn" type="button" data-kso-status="work" aria-pressed="false">Работаю</button>
-                    <button class="segment-btn" type="button" data-kso-status="off" aria-pressed="false">Выходной</button>
+                <label><span>Месяц</span><input name="month" type="month" required></label>
+                <div class="two-cols">
+                    <label><span>Часы</span><input name="hours" type="number" min="1" max="24" step="0.5" value="10"></label>
+                    <label class="checkbox-label">
+                        <input name="applyHoursToAll" type="checkbox" checked>
+                        <span>применять часы ко всем выбранным датам</span>
+                    </label>
                 </div>
-                <label><span>Дата</span><input name="date" type="date" required></label>
-                <button class="secondary-btn" type="button" id="ksoScheduleTodayBtn">Сегодня</button>
-                <div class="confirm-box hidden" id="ksoScheduleConfirm"></div>
-                <button class="primary-btn" type="submit">Сохранить график</button>
+                <div class="schedule-month-grid" id="ksoScheduleCalendar"></div>
+                <div class="confirm-box" id="ksoScheduleConfirm"></div>
+                <button class="primary-btn" type="submit">Сохранить месяц</button>
                 <p class="status"></p>
             </form>
         </section>

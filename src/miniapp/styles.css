@@ -412,6 +412,58 @@ textarea:focus {
   background: #fbfcfd;
 }
 
+.checkbox-label {
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+}
+
+.checkbox-label input {
+  width: auto;
+}
+
+.schedule-month-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.schedule-day {
+  display: grid;
+  gap: 6px;
+  min-height: 116px;
+  padding: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfd;
+}
+
+.schedule-day.active {
+  border-color: var(--accent);
+  background: var(--soft);
+}
+
+.schedule-day label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 800;
+}
+
+.schedule-day input[type="checkbox"] {
+  width: auto;
+}
+
+.schedule-day input[type="number"] {
+  padding: 7px 8px;
+}
+
+.schedule-counts {
+  display: grid;
+  gap: 2px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .decision-grid {
   display: grid;
   gap: 10px;
@@ -601,5 +653,9 @@ textarea:focus {
 
   .photo-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .schedule-month-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
