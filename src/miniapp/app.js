@@ -28,6 +28,13 @@ const cancelEditBtn = document.querySelector('#cancelEditBtn');
 const ksoScheduleForm = document.querySelector('#ksoScheduleForm');
 const ksoScheduleConfirm = document.querySelector('#ksoScheduleConfirm');
 const ksoScheduleCalendar = document.querySelector('#ksoScheduleCalendar');
+const ksoScheduleDraftBtn = document.querySelector('#ksoScheduleDraftBtn');
+const ksoScheduleApplyRangeBtn = document.querySelector('#ksoScheduleApplyRangeBtn');
+const ksoScheduleRemoveTomorrowBtn = document.querySelector('#ksoScheduleRemoveTomorrowBtn');
+const ksoScheduleRequests = document.querySelector('#ksoScheduleRequests');
+const ksoScheduleTableWrap = document.querySelector('#ksoScheduleTableWrap');
+const ksoScheduleTable = document.querySelector('#ksoScheduleTable');
+const ksoScheduleTableRefreshBtn = document.querySelector('#ksoScheduleTableRefreshBtn');
 const ksoDecisionModel = document.querySelector('#ksoDecisionModel');
 const ksoDecisionStatus = document.querySelector('#ksoDecisionStatus');
 const ksoDecisionPreviewForm = document.querySelector('#ksoDecisionPreviewForm');
@@ -44,6 +51,16 @@ function todayInputDate() {
     now.getFullYear(),
     String(now.getMonth() + 1).padStart(2, '0'),
     String(now.getDate()).padStart(2, '0')
+  ].join('-');
+}
+
+function tomorrowInputDate() {
+  const date = new Date();
+  date.setDate(date.getDate() + 1);
+  return [
+    date.getFullYear(),
+    String(date.getMonth() + 1).padStart(2, '0'),
+    String(date.getDate()).padStart(2, '0')
   ].join('-');
 }
 
@@ -588,6 +605,10 @@ function isCurrentUserAdmin() {
   return state.config?.user?.isAdmin === true || state.config?.user?.role === 'admin';
 }
 
+function isCurrentUserReviewer() {
+  return isCurrentUserAdmin() || state.config?.user?.role === 'operator';
+}
+
 function applyAdminOnlyVisibility() {
   if (isCurrentUserAdmin()) {
     return;
@@ -824,12 +845,19 @@ function renderKsoScheduleConfirm() {
 
   const selected = state.ksoScheduleDays.filter((day) => day.selected);
   const totalHours = selected.reduce((sum, day) => sum + normalizeHours(day.hours, 0), 0);
+  const averageHours = selected.length ? (totalHours / selected.length).toFixed(1) : '0';
 
   ksoScheduleConfirm.innerHTML = `
     <strong>Проверьте график</strong>
     <span>Выбрано дней: ${selected.length}</span>
     <span>Итого часов: ${totalHours}</span>
+    <span>Средняя смена: ${averageHours}</span>
   `;
+}
+
+function weekdayShort(dateValue) {
+  const date = new Date(`${dateValue}T00:00:00`);
+  return ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'][date.getDay()];
 }
 
 function renderKsoScheduleCalendar() {
@@ -844,7 +872,7 @@ function renderKsoScheduleCalendar() {
     item.innerHTML = `
       <label>
         <input type="checkbox" ${day.selected ? 'checked' : ''}>
-        <span>${day.day}</span>
+        <span>${day.day} · ${weekdayShort(day.date)}</span>
       </label>
       <input type="number" min="1" max="24" step="0.5" value="${day.hours || ksoScheduleForm.hours.value || 10}" ${day.selected ? '' : 'disabled'}>
       <div class="schedule-counts">
@@ -873,6 +901,51 @@ function renderKsoScheduleCalendar() {
   renderKsoScheduleConfirm();
 }
 
+function setKsoScheduleRange(startDate, endDate) {
+  if (!startDate || !endDate) {
+    return;
+  }
+
+  const [from, to] = startDate <= endDate ? [startDate, endDate] : [endDate, startDate];
+  state.ksoScheduleDays = state.ksoScheduleDays.map((day) => {
+    if (day.date < from || day.date > to) {
+      return day;
+    }
+
+    return {
+      ...day,
+      selected: true,
+      hours: normalizeHours(ksoScheduleForm.hours.value)
+    };
+  });
+  renderKsoScheduleCalendar();
+}
+
+function applyKsoScheduleTemplate(template) {
+  const hours = template === '2-2' ? 14 : 10;
+  if (template === 'clear') {
+    state.ksoScheduleDays = state.ksoScheduleDays.map((day) => ({ ...day, selected: false, hours }));
+    ksoScheduleForm.hours.value = 10;
+    renderKsoScheduleCalendar();
+    return;
+  }
+
+  ksoScheduleForm.hours.value = hours;
+  state.ksoScheduleDays = state.ksoScheduleDays.map((day, index) => {
+    let selected = false;
+    if (template === '2-2') {
+      selected = Math.floor(index / 2) % 2 === 0;
+    } else if (template === '5-2') {
+      selected = new Date(`${day.date}T00:00:00`).getDay() >= 1 && new Date(`${day.date}T00:00:00`).getDay() <= 5;
+    } else if (template === '6-1') {
+      selected = new Date(`${day.date}T00:00:00`).getDay() !== 0;
+    }
+
+    return { ...day, selected, hours };
+  });
+  renderKsoScheduleCalendar();
+}
+
 async function loadKsoScheduleMonth() {
   if (!ksoScheduleForm) {
     return;
@@ -899,8 +972,112 @@ async function loadKsoScheduleMonth() {
   renderKsoScheduleCalendar();
 }
 
-async function handleKsoScheduleSubmit(event) {
-  event.preventDefault();
+function statusText(status) {
+  return {
+    draft: 'Черновик',
+    submitted: 'На согласовании',
+    approved: 'Одобрено',
+    rejected: 'Отклонено'
+  }[status] || status;
+}
+
+function requestTypeText(type) {
+  return type === 'removal' ? 'Снятие смены' : 'График месяца';
+}
+
+function renderKsoScheduleRequests(requests) {
+  if (!ksoScheduleRequests) {
+    return;
+  }
+
+  const visible = (requests || []).slice(0, 12);
+  if (!visible.length) {
+    ksoScheduleRequests.innerHTML = '<section class="decision-card"><h3>Заявок пока нет</h3></section>';
+    return;
+  }
+
+  ksoScheduleRequests.innerHTML = visible.map((request) => `
+    <section class="decision-card" data-request-id="${request.id}">
+      <h3>${request.fio} · ${request.month}</h3>
+      <p>Тип: ${requestTypeText(request.requestType)}</p>
+      <p>Статус: ${statusText(request.status)}</p>
+      <p>Дней: ${request.workDays}, часов: ${request.totalHours}</p>
+      ${isCurrentUserReviewer() && request.status === 'submitted' ? `
+        <div class="two-cols">
+          <button class="secondary-btn" type="button" data-review-action="rejected">Отклонить</button>
+          <button class="primary-btn" type="button" data-review-action="approved">Сохранить в график</button>
+        </div>
+      ` : ''}
+    </section>
+  `).join('');
+
+  ksoScheduleRequests.querySelectorAll('[data-review-action]').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const card = button.closest('[data-request-id]');
+      const status = ksoScheduleForm.querySelector('.status');
+      try {
+        const result = await submitJson('/api/miniapp/kso-schedule/review', {
+          requestId: card.dataset.requestId,
+          action: button.dataset.reviewAction
+        });
+        setStatus(status, result.message, 'success');
+        await loadKsoScheduleRequests();
+        await loadKsoScheduleMonth();
+        await loadKsoScheduleTable();
+      } catch (error) {
+        setStatus(status, error.message, 'error');
+      }
+    });
+  });
+}
+
+async function loadKsoScheduleRequests() {
+  if (!ksoScheduleRequests) {
+    return;
+  }
+
+  const result = await fetchMiniAppJson('/api/miniapp/kso-schedule/requests');
+  renderKsoScheduleRequests(result.requests || []);
+}
+
+function renderKsoScheduleTable(table) {
+  if (!ksoScheduleTable) {
+    return;
+  }
+
+  if (!table?.rows?.length) {
+    ksoScheduleTable.innerHTML = '<p class="status">Таблица графика пока пустая.</p>';
+    return;
+  }
+
+  const dayHeaders = table.days.map((day) => `<th>${day}</th>`).join('');
+  const rows = table.rows.map((row) => `
+    <tr>
+      <td>${row.fio}</td>
+      ${table.days.map((day) => `<td>${row.days[String(day)] || ''}</td>`).join('')}
+      <td>${row.total || ''}</td>
+    </tr>
+  `).join('');
+
+  ksoScheduleTable.innerHTML = `
+    <table class="schedule-table">
+      <thead><tr><th>ФИО</th>${dayHeaders}<th>Итого</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+  `;
+}
+
+async function loadKsoScheduleTable() {
+  if (!ksoScheduleTable || !isCurrentUserReviewer()) {
+    return;
+  }
+
+  const month = ksoScheduleForm.month.value || currentMonthInput();
+  const result = await fetchMiniAppJson(`/api/miniapp/kso-schedule/table?${new URLSearchParams({ month }).toString()}`);
+  renderKsoScheduleTable(result.table);
+}
+
+async function saveKsoSchedule(statusMode = 'submitted') {
   const status = ksoScheduleForm.querySelector('.status');
   const button = ksoScheduleForm.querySelector('.primary-btn');
   const month = ksoScheduleForm.month.value;
@@ -910,19 +1087,46 @@ async function handleKsoScheduleSubmit(event) {
 
   try {
     const result = await submitJson('/api/miniapp/kso-schedule/month', {
+      requestId: ksoScheduleForm.requestId.value || '',
       month,
+      status: statusMode,
       entries: state.ksoScheduleDays.map((day) => ({
         date: day.date,
         hours: day.selected ? normalizeHours(day.hours) : 0
       }))
     });
+    ksoScheduleForm.requestId.value = result.request?.id || '';
     setStatus(status, result.message || 'График сохранен.', 'success');
     await loadKsoScheduleMonth();
+    await loadKsoScheduleRequests();
   } catch (error) {
     setStatus(status, error.message, 'error');
   } finally {
     button.disabled = false;
   }
+}
+
+async function requestRemoveTomorrowShift() {
+  const status = ksoScheduleForm.querySelector('.status');
+  const tomorrow = tomorrowInputDate();
+
+  try {
+    const result = await submitJson('/api/miniapp/kso-schedule/month', {
+      month: tomorrow.slice(0, 7),
+      status: 'submitted',
+      requestType: 'removal',
+      entries: [{ date: tomorrow, hours: 0 }]
+    });
+    setStatus(status, result.message || 'Заявка на снятие смены отправлена.', 'success');
+    await loadKsoScheduleRequests();
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+  }
+}
+
+async function handleKsoScheduleSubmit(event) {
+  event.preventDefault();
+  await saveKsoSchedule('submitted');
 }
 
 function renderKsoDecisionModel(model) {
@@ -1199,6 +1403,7 @@ async function init() {
   if (ksoScheduleForm?.month) {
     ksoScheduleForm.month.value = currentMonthInput();
   }
+  ksoScheduleTableWrap?.classList.toggle('hidden', !isCurrentUserReviewer());
 
   addEvent();
   renderPhotos();
@@ -1207,8 +1412,10 @@ async function init() {
   loadRecentFixations().catch(() => {});
   if (isCurrentUserAdmin()) {
     loadKsoDecisionModel().catch(() => {});
-    loadKsoScheduleMonth().catch(() => {});
   }
+  loadKsoScheduleMonth().catch(() => {});
+  loadKsoScheduleRequests().catch(() => {});
+  loadKsoScheduleTable().catch(() => {});
 
   fixationForm.regionId.addEventListener('change', () => {
     state.shopSelectionTouched = true;
@@ -1242,6 +1449,13 @@ async function init() {
     loadKsoScheduleMonth().catch((error) => {
       setStatus(ksoScheduleForm.querySelector('.status'), error.message, 'error');
     });
+    loadKsoScheduleTable().catch(() => {});
+  });
+  ksoScheduleForm?.querySelectorAll('[data-schedule-template]').forEach((button) => {
+    button.addEventListener('click', () => applyKsoScheduleTemplate(button.dataset.scheduleTemplate));
+  });
+  ksoScheduleApplyRangeBtn?.addEventListener('click', () => {
+    setKsoScheduleRange(ksoScheduleForm.rangeStart.value, ksoScheduleForm.rangeEnd.value);
   });
   ksoScheduleForm?.hours.addEventListener('input', () => {
     if (ksoScheduleForm.applyHoursToAll.checked) {
@@ -1260,6 +1474,17 @@ async function init() {
     }
   });
   ksoScheduleForm?.addEventListener('submit', handleKsoScheduleSubmit);
+  ksoScheduleDraftBtn?.addEventListener('click', () => {
+    saveKsoSchedule('draft').catch(() => {});
+  });
+  ksoScheduleRemoveTomorrowBtn?.addEventListener('click', () => {
+    requestRemoveTomorrowShift().catch(() => {});
+  });
+  ksoScheduleTableRefreshBtn?.addEventListener('click', () => {
+    loadKsoScheduleTable().catch((error) => {
+      setStatus(ksoScheduleForm.querySelector('.status'), error.message, 'error');
+    });
+  });
   ksoDecisionPreviewForm?.addEventListener('submit', handleKsoDecisionPreviewSubmit);
   bonusMonthSelect?.addEventListener('change', () => {
     loadBonusSummary(bonusMonthSelect.value).catch(() => {});

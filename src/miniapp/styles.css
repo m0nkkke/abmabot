@@ -464,6 +464,44 @@ textarea:focus {
   font-size: 12px;
 }
 
+.schedule-table-wrap {
+  display: grid;
+  gap: 10px;
+}
+
+.schedule-table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.schedule-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: collapse;
+  background: #fff;
+  font-size: 13px;
+}
+
+.schedule-table th,
+.schedule-table td {
+  min-width: 42px;
+  padding: 7px 8px;
+  border-bottom: 1px solid var(--line);
+  border-right: 1px solid var(--line);
+  text-align: center;
+}
+
+.schedule-table th:first-child,
+.schedule-table td:first-child {
+  position: sticky;
+  left: 0;
+  min-width: 190px;
+  background: #fff;
+  text-align: left;
+  font-weight: 800;
+}
+
 .decision-grid {
   display: grid;
   gap: 10px;

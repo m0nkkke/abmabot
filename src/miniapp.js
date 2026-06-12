@@ -14,9 +14,12 @@ const {
   createTextReport
 } = require('./services/reportService');
 const {
+  approveKsoScheduleRequest,
   createKsoScheduleMonth,
   createKsoScheduleStatus,
-  getKsoScheduleMonth
+  getKsoScheduleMonth,
+  getKsoScheduleTable,
+  listKsoScheduleRequestItems
 } = require('./services/ksoScheduleService');
 const { getKsoDecisionModel } = require('./services/ksoDecisionService');
 const {
@@ -103,6 +106,22 @@ router.get('/kso-schedule/month', async (req, res, next) => {
   }
 });
 
+router.get('/kso-schedule/requests', async (req, res, next) => {
+  try {
+    res.json({ ok: true, ...(await listKsoScheduleRequestItems(req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
+router.get('/kso-schedule/table', async (req, res, next) => {
+  try {
+    res.json({ ok: true, ...(await getKsoScheduleTable(req.query || {}, req)) });
+  } catch (error) {
+    next(error);
+  }
+});
+
 postAction('/fixations', (body, req) => createFixation({
   ...body,
   userId: req.miniAppUserId || body.userId
@@ -116,6 +135,7 @@ postAction(['/reports', '/text-report'], createTextReport);
 postAction(['/kso', '/kso-report'], createKsoReport);
 postAction('/kso-schedule', createKsoScheduleStatus);
 postAction('/kso-schedule/month', createKsoScheduleMonth);
+postAction('/kso-schedule/review', approveKsoScheduleRequest);
 postAction(['/tech', '/tech-report'], createTechReport);
 
 router.use((error, req, res, next) => {

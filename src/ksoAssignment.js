@@ -1065,6 +1065,44 @@ async function getScheduleMonthSummary(isoDate) {
   };
 }
 
+async function getScheduleMonthTable(isoDate) {
+  const data = await loadAssignmentData(isoDate);
+  const [headers = [], ...rows] = data.rawSchedule || [];
+  const year = Number(isoDate.slice(0, 4));
+  const month = Number(isoDate.slice(5, 7));
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const days = Array.from({ length: lastDay }, (_, index) => index + 1);
+  const totalColumn = headers.findIndex((header) => normalizeText(header) === normalizeText('Итого'));
+
+  return {
+    month: isoDate.slice(0, 7),
+    days,
+    rows: rows
+      .filter((row) => String(row[1] || row[2] || '').trim())
+      .map((row) => {
+        const dayValues = {};
+        let computedTotal = 0;
+
+        days.forEach((day) => {
+          const columnIndex = headers.findIndex((header) => Number(header) === day);
+          const actualIndex = columnIndex >= 0 ? columnIndex : day + 2;
+          const hours = numberValue(row[actualIndex], 0);
+          dayValues[String(day)] = hours > 0 ? hours : '';
+          computedTotal += hours;
+        });
+
+        const tableTotal = totalColumn >= 0 ? numberValue(row[totalColumn], computedTotal) : computedTotal;
+
+        return {
+          id: String(row[0] || '').trim(),
+          fio: String(row[1] || row[2] || '').trim(),
+          days: dayValues,
+          total: tableTotal
+        };
+      })
+  };
+}
+
 async function applyManualAssignment(fio, shopCode, isoDate = todayIso()) {
   try {
     const data = await loadAssignmentData(isoDate);
@@ -1159,6 +1197,7 @@ module.exports = {
   applyManualAssignment,
   formatDisplayDate,
   getScheduleMonthSummary,
+  getScheduleMonthTable,
   historySheetName,
   initKsoAssignmentSheet,
   isPastDate,

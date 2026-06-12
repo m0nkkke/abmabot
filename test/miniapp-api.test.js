@@ -467,6 +467,49 @@ describe('miniapp API smoke', () => {
     }
   });
 
+  test('creates KSO schedule draft without writing to sheets', async () => {
+    const server = createTestServer();
+
+    try {
+      const { response, body } = await requestJson(server.baseUrl, '/api/miniapp/kso-schedule/month', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          fio: 'Schedule User',
+          month: '2026-06',
+          status: 'draft',
+          entries: [
+            { date: '2026-06-01', hours: 10 },
+            { date: '2026-06-02', hours: 0 }
+          ]
+        })
+      });
+
+      assert.equal(response.status, 200);
+      assert.equal(body.ok, true);
+      assert.equal(body.request.status, 'draft');
+      assert.equal(body.totalHours, 10);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('requires reviewer rights for KSO schedule table before reading sheets', async () => {
+    const server = createTestServer();
+
+    try {
+      const { response, body } = await requestJson(server.baseUrl, '/api/miniapp/kso-schedule/table?month=2026-06');
+
+      assert.equal(response.status, 403);
+      assert.equal(body.ok, false);
+      assert.match(body.error, /прав|согласован/i);
+    } finally {
+      await server.close();
+    }
+  });
+
   test('serves KSO decision model', async () => {
     const server = createTestServer();
 

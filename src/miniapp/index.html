@@ -26,7 +26,7 @@
             <button class="tab" data-tab="online">Онлайн-кражи</button>
             <button class="tab" data-tab="report">Отчет</button>
             <button class="tab" data-tab="kso">Отписка КСО</button>
-            <button class="tab" data-tab="ksoSchedule" data-admin-only="true">График КСО</button>
+            <button class="tab" data-tab="ksoSchedule">График работы</button>
             <button class="tab" data-tab="ksoDecision" data-admin-only="true">СППР КСО</button>
             <button class="tab" data-tab="tech">Тех. неполадка</button>
             <button class="tab" data-tab="bonuses">Премии</button>
@@ -149,10 +149,17 @@
             </form>
         </section>
 
-        <section class="panel" id="ksoSchedule" data-admin-only="true">
+        <section class="panel" id="ksoSchedule">
             <form class="simple-form" id="ksoScheduleForm">
-                <h2>График КСО</h2>
+                <h2>График работы</h2>
+                <input type="hidden" name="requestId">
                 <label><span>Месяц</span><input name="month" type="month" required></label>
+                <div class="segmented">
+                    <button class="segment-btn" type="button" data-schedule-template="2-2">2/2 · 14 часов</button>
+                    <button class="segment-btn" type="button" data-schedule-template="5-2">5/2 · 10 часов</button>
+                    <button class="segment-btn" type="button" data-schedule-template="6-1">6/1 · 10 часов</button>
+                    <button class="segment-btn" type="button" data-schedule-template="clear">Очистить месяц</button>
+                </div>
                 <div class="two-cols">
                     <label><span>Часы</span><input name="hours" type="number" min="1" max="24" step="0.5" value="10"></label>
                     <label class="checkbox-label">
@@ -160,9 +167,24 @@
                         <span>применять часы ко всем выбранным датам</span>
                     </label>
                 </div>
+                <div class="two-cols">
+                    <label><span>Начало диапазона</span><input name="rangeStart" type="date"></label>
+                    <label><span>Конец диапазона</span><input name="rangeEnd" type="date"></label>
+                </div>
+                <button class="secondary-btn" type="button" id="ksoScheduleApplyRangeBtn">Выбрать диапазон</button>
                 <div class="schedule-month-grid" id="ksoScheduleCalendar"></div>
                 <div class="confirm-box" id="ksoScheduleConfirm"></div>
-                <button class="primary-btn" type="submit">Сохранить месяц</button>
+                <div class="two-cols">
+                    <button class="secondary-btn" type="button" id="ksoScheduleDraftBtn">Сохранить черновик</button>
+                    <button class="primary-btn" type="submit">Отправить на согласование</button>
+                </div>
+                <button class="secondary-btn" type="button" id="ksoScheduleRemoveTomorrowBtn">Запросить снятие смены завтра</button>
+                <div class="decision-preview" id="ksoScheduleRequests"></div>
+                <div class="schedule-table-wrap hidden" id="ksoScheduleTableWrap">
+                    <h3>Таблица месяца</h3>
+                    <button class="secondary-btn" type="button" id="ksoScheduleTableRefreshBtn">Обновить таблицу</button>
+                    <div class="schedule-table-scroll" id="ksoScheduleTable"></div>
+                </div>
                 <p class="status"></p>
             </form>
         </section>

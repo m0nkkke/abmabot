@@ -1,11 +1,31 @@
-const { getProfile, isAllowedUser } = require('../db');
+const { ROLES } = require('../constants');
+const {
+  getProfile,
+  getUserRole,
+  isAllowedUser,
+  listEmployees,
+  listKsoScheduleRequests,
+  reviewKsoScheduleRequest,
+  saveKsoScheduleRequest
+} = require('../db');
+const { sendMessageToUser } = require('../maxClient');
 const {
   formatDisplayDate,
   getScheduleMonthSummary,
+  getScheduleMonthTable,
   parseInputDate,
   updateScheduleMonth,
   updateScheduleStatus
 } = require('../ksoAssignment');
+
+const ADMIN_USER_IDS = (process.env.ADMIN_USER_IDS || '')
+  .split(',')
+  .map((userId) => userId.trim())
+  .filter(Boolean);
+const KSO_SCHEDULE_REVIEWER_IDS = (process.env.KSO_SCHEDULE_REVIEWER_IDS || '')
+  .split(',')
+  .map((userId) => userId.trim())
+  .filter(Boolean);
 
 function createValidationError(message, statusCode = 400) {
   const error = new Error(message);
@@ -96,6 +116,28 @@ function getMiniAppProfile(req, data) {
   };
 }
 
+function getMiniAppUserId(req) {
+  return req?.miniAppUserId ? String(req.miniAppUserId) : '';
+}
+
+function isReviewer(userId) {
+  if (ADMIN_USER_IDS.includes(String(userId)) || KSO_SCHEDULE_REVIEWER_IDS.includes(String(userId))) {
+    return true;
+  }
+
+  const role = getUserRole(userId);
+  return role === ROLES.OPERATOR || role === ROLES.ADMIN;
+}
+
+function assertReviewer(req) {
+  const userId = getMiniAppUserId(req);
+  if (!userId || !isReviewer(userId)) {
+    throw createValidationError('Недостаточно прав для согласования графика', 403);
+  }
+
+  return userId;
+}
+
 async function createKsoScheduleStatus(data, req) {
   const isoDate = parseInputDate(data.date);
   const status = normalizeScheduleStatus(data.status);
@@ -141,13 +183,66 @@ function normalizeScheduleEntries(data) {
   });
 }
 
+function normalizeRequestType(value) {
+  const type = normalizeText(value);
+  return type === 'removal' ? 'removal' : 'month';
+}
+
+function getReviewerIds() {
+  const roleReviewers = listEmployees()
+    .filter((employee) => employee.active === 1 && [ROLES.OPERATOR, ROLES.ADMIN].includes(employee.role))
+    .map((employee) => String(employee.user_id));
+
+  return [...new Set([...roleReviewers, ...ADMIN_USER_IDS, ...KSO_SCHEDULE_REVIEWER_IDS].filter(Boolean))];
+}
+
+function requestTypeLabel(type) {
+  return type === 'removal' ? 'Снятие смены' : 'График месяца';
+}
+
+async function notifyScheduleReviewers(request) {
+  if (!request || request.status !== 'submitted') {
+    return;
+  }
+
+  const totalHours = request.entries.reduce((sum, entry) => sum + normalizeNumber(entry.hours), 0);
+  const workDays = request.entries.filter((entry) => normalizeNumber(entry.hours) > 0).length;
+  const text = [
+    'Новая заявка на график работы',
+    '',
+    `Сотрудник: ${request.fio}`,
+    `Месяц: ${request.month}`,
+    `Тип: ${requestTypeLabel(request.requestType)}`,
+    `Дней: ${workDays}`,
+    `Часов: ${totalHours}`,
+    '',
+    'Откройте miniapp -> График работы'
+  ].join('\n');
+
+  await Promise.allSettled(getReviewerIds().map((reviewerId) => sendMessageToUser(reviewerId, text)));
+}
+
 async function createKsoScheduleMonth(data, req) {
   const entries = normalizeScheduleEntries(data);
   const { userId, profile } = getMiniAppProfile(req, data);
-  const message = await updateScheduleMonth(userId || 'miniapp', profile, entries);
+  const status = normalizeText(data.status) === 'submitted' ? 'submitted' : 'draft';
+  const request = saveKsoScheduleRequest({
+    id: normalizeText(data.requestId) || null,
+    userId: userId || 'miniapp',
+    fio: profile.fio,
+    month: parseMonth(data.month),
+    requestType: normalizeRequestType(data.requestType),
+    status,
+    entries,
+    comment: normalizeText(data.comment)
+  });
+  await notifyScheduleReviewers(request);
 
   return {
-    message,
+    request,
+    message: status === 'submitted'
+      ? 'График отправлен на согласование.'
+      : 'Черновик графика сохранен.',
     totalHours: entries.reduce((sum, entry) => sum + normalizeNumber(entry.hours), 0)
   };
 }
@@ -163,9 +258,75 @@ async function getKsoScheduleMonth(data) {
   };
 }
 
+async function getKsoScheduleTable(data, req) {
+  assertReviewer(req);
+  const month = parseMonth(data.month);
+  if (!month) {
+    throw createValidationError('Укажите месяц в формате ГГГГ-ММ');
+  }
+
+  return {
+    table: await getScheduleMonthTable(`${month}-01`)
+  };
+}
+
+function serializeRequest(request) {
+  if (!request) {
+    return null;
+  }
+
+  return {
+    ...request,
+    totalHours: request.entries.reduce((sum, entry) => sum + normalizeNumber(entry.hours), 0),
+    workDays: request.entries.filter((entry) => normalizeNumber(entry.hours) > 0).length
+  };
+}
+
+async function listKsoScheduleRequestItems(req) {
+  const userId = getMiniAppUserId(req);
+  if (!userId) {
+    throw createValidationError('Откройте miniapp через MAX', 403);
+  }
+
+  const requests = isReviewer(userId)
+    ? listKsoScheduleRequests({ limit: 100 })
+    : listKsoScheduleRequests({ userId, limit: 50 });
+
+  return {
+    requests: requests.map(serializeRequest)
+  };
+}
+
+async function approveKsoScheduleRequest(data, req) {
+  const reviewerId = assertReviewer(req);
+  const requestId = normalizeText(data.requestId);
+  const action = normalizeText(data.action);
+
+  if (!requestId || !['approved', 'rejected'].includes(action)) {
+    throw createValidationError('Укажите заявку и действие согласования');
+  }
+
+  const reviewed = reviewKsoScheduleRequest(requestId, action, reviewerId, normalizeText(data.comment));
+  if (!reviewed) {
+    throw createValidationError('Заявка не найдена или уже обработана', 404);
+  }
+
+  if (action === 'approved') {
+    await updateScheduleMonth(reviewerId, { fio: reviewed.fio }, reviewed.entries);
+  }
+
+  return {
+    request: serializeRequest(reviewed),
+    message: action === 'approved' ? 'График одобрен и записан в таблицу.' : 'Заявка отклонена.'
+  };
+}
+
 module.exports = {
+  approveKsoScheduleRequest,
   createKsoScheduleMonth,
   createKsoScheduleStatus,
   getKsoScheduleMonth,
+  getKsoScheduleTable,
+  listKsoScheduleRequestItems,
   normalizeScheduleStatus
 };

@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const { randomUUID } = require('crypto');
 const Database = require('better-sqlite3');
 const { ROLES } = require('./constants');
 const seedShops = require('./shops.json');
@@ -96,6 +97,22 @@ db.exec(`
     expires_at INTEGER NOT NULL,
     used_at INTEGER
   );
+
+  CREATE TABLE IF NOT EXISTS kso_schedule_requests (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    fio TEXT NOT NULL,
+    month TEXT NOT NULL,
+    request_type TEXT NOT NULL DEFAULT 'month',
+    status TEXT NOT NULL DEFAULT 'draft',
+    entries TEXT NOT NULL,
+    comment TEXT NOT NULL DEFAULT '',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    submitted_at DATETIME,
+    reviewed_at DATETIME,
+    reviewed_by TEXT
+  );
 `);
 
 const employeeColumns = db.pragma('table_info(employees)').map((column) => column.name);
@@ -143,6 +160,56 @@ const markMiniAppSessionUsedStmt = db.prepare(`
   WHERE token = @token
 `);
 const deleteExpiredMiniAppSessionsStmt = db.prepare('DELETE FROM miniapp_sessions WHERE expires_at <= ?');
+
+const insertKsoScheduleRequestStmt = db.prepare(`
+  INSERT INTO kso_schedule_requests (
+    id, user_id, fio, month, request_type, status, entries, comment, submitted_at
+  )
+  VALUES (
+    @id, @userId, @fio, @month, @requestType, @status, @entries, @comment,
+    CASE WHEN @status = 'submitted' THEN CURRENT_TIMESTAMP ELSE NULL END
+  )
+`);
+const updateKsoScheduleRequestStmt = db.prepare(`
+  UPDATE kso_schedule_requests
+  SET
+    fio = @fio,
+    month = @month,
+    request_type = @requestType,
+    status = @status,
+    entries = @entries,
+    comment = @comment,
+    updated_at = CURRENT_TIMESTAMP,
+    submitted_at = CASE
+      WHEN @status = 'submitted' AND submitted_at IS NULL THEN CURRENT_TIMESTAMP
+      WHEN @status = 'draft' THEN NULL
+      ELSE submitted_at
+    END
+  WHERE id = @id
+    AND user_id = @userId
+    AND status IN ('draft', 'rejected')
+`);
+const getKsoScheduleRequestStmt = db.prepare(`
+  SELECT id, user_id, fio, month, request_type, status, entries, comment, created_at, updated_at, submitted_at, reviewed_at, reviewed_by
+  FROM kso_schedule_requests
+  WHERE id = ?
+`);
+const listKsoScheduleRequestsStmt = db.prepare(`
+  SELECT id, user_id, fio, month, request_type, status, entries, comment, created_at, updated_at, submitted_at, reviewed_at, reviewed_by
+  FROM kso_schedule_requests
+  ORDER BY updated_at DESC
+  LIMIT ?
+`);
+const reviewKsoScheduleRequestStmt = db.prepare(`
+  UPDATE kso_schedule_requests
+  SET status = @status,
+      reviewed_at = CURRENT_TIMESTAMP,
+      reviewed_by = @reviewedBy,
+      updated_at = CURRENT_TIMESTAMP,
+      comment = COALESCE(@comment, comment)
+  WHERE id = @id
+    AND status = 'submitted'
+`);
 
 const getConsentStmt = db.prepare('SELECT user_id, policy_version, text, accepted_at FROM consents WHERE user_id = ?');
 const upsertConsentStmt = db.prepare(`
@@ -425,6 +492,82 @@ function deleteExpiredMiniAppSessions(now = Date.now()) {
   return deleteExpiredMiniAppSessionsStmt.run(Number(now)).changes;
 }
 
+function parseKsoScheduleRequest(row) {
+  if (!row) {
+    return null;
+  }
+
+  let entries = [];
+  try {
+    entries = JSON.parse(row.entries || '[]');
+  } catch (error) {
+    entries = [];
+  }
+
+  return {
+    id: row.id,
+    userId: row.user_id,
+    fio: row.fio,
+    month: row.month,
+    requestType: row.request_type,
+    status: row.status,
+    entries,
+    comment: row.comment || '',
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    submittedAt: row.submitted_at,
+    reviewedAt: row.reviewed_at,
+    reviewedBy: row.reviewed_by
+  };
+}
+
+function saveKsoScheduleRequest(data) {
+  const id = data.id || randomUUID();
+  const payload = {
+    id,
+    userId: String(data.userId),
+    fio: data.fio,
+    month: data.month,
+    requestType: data.requestType || 'month',
+    status: data.status || 'draft',
+    entries: JSON.stringify(data.entries || []),
+    comment: data.comment || ''
+  };
+
+  if (data.id) {
+    const updated = updateKsoScheduleRequestStmt.run(payload);
+    if (updated.changes > 0) {
+      return getKsoScheduleRequest(id);
+    }
+  }
+
+  insertKsoScheduleRequestStmt.run(payload);
+  return getKsoScheduleRequest(id);
+}
+
+function getKsoScheduleRequest(id) {
+  return parseKsoScheduleRequest(getKsoScheduleRequestStmt.get(String(id)));
+}
+
+function listKsoScheduleRequests({ userId = null, statuses = null, limit = 100 } = {}) {
+  return listKsoScheduleRequestsStmt.all(Number(limit))
+    .map(parseKsoScheduleRequest)
+    .filter((request) => request
+      && (!userId || request.userId === String(userId))
+      && (!statuses || statuses.includes(request.status)));
+}
+
+function reviewKsoScheduleRequest(id, status, reviewedBy, comment = '') {
+  const result = reviewKsoScheduleRequestStmt.run({
+    id: String(id),
+    status,
+    reviewedBy: String(reviewedBy),
+    comment
+  });
+
+  return result.changes > 0 ? getKsoScheduleRequest(id) : null;
+}
+
 function getConsent(userId) {
   return getConsentStmt.get(String(userId));
 }
@@ -669,6 +812,10 @@ module.exports = {
   getMiniAppSession,
   markMiniAppSessionUsed,
   deleteExpiredMiniAppSessions,
+  saveKsoScheduleRequest,
+  getKsoScheduleRequest,
+  listKsoScheduleRequests,
+  reviewKsoScheduleRequest,
   getConsent,
   saveConsent,
   deleteConsent,
