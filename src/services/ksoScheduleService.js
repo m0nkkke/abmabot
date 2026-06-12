@@ -1,6 +1,7 @@
 const { ROLES } = require('../constants');
 const {
   getProfile,
+  getKsoScheduleRequest,
   getUserRole,
   isAllowedUser,
   listEmployees,
@@ -306,7 +307,20 @@ async function approveKsoScheduleRequest(data, req) {
     throw createValidationError('Укажите заявку и действие согласования');
   }
 
-  const reviewed = reviewKsoScheduleRequest(requestId, action, reviewerId, normalizeText(data.comment));
+  let editedEntries = null;
+  if (action === 'approved' && Array.isArray(data.entries)) {
+    const existing = getKsoScheduleRequest(requestId);
+    if (!existing || existing.status !== 'submitted') {
+      throw createValidationError('Заявка не найдена или уже обработана', 404);
+    }
+
+    editedEntries = normalizeScheduleEntries({
+      month: existing.month,
+      entries: data.entries
+    });
+  }
+
+  const reviewed = reviewKsoScheduleRequest(requestId, action, reviewerId, normalizeText(data.comment), editedEntries);
   if (!reviewed) {
     throw createValidationError('Заявка не найдена или уже обработана', 404);
   }

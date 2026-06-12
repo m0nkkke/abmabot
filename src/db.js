@@ -203,6 +203,7 @@ const listKsoScheduleRequestsStmt = db.prepare(`
 const reviewKsoScheduleRequestStmt = db.prepare(`
   UPDATE kso_schedule_requests
   SET status = @status,
+      entries = COALESCE(@entries, entries),
       reviewed_at = CURRENT_TIMESTAMP,
       reviewed_by = @reviewedBy,
       updated_at = CURRENT_TIMESTAMP,
@@ -557,12 +558,13 @@ function listKsoScheduleRequests({ userId = null, statuses = null, limit = 100 }
       && (!statuses || statuses.includes(request.status)));
 }
 
-function reviewKsoScheduleRequest(id, status, reviewedBy, comment = '') {
+function reviewKsoScheduleRequest(id, status, reviewedBy, comment = '', entries = null) {
   const result = reviewKsoScheduleRequestStmt.run({
     id: String(id),
     status,
     reviewedBy: String(reviewedBy),
-    comment
+    comment,
+    entries: entries ? JSON.stringify(entries) : null
   });
 
   return result.changes > 0 ? getKsoScheduleRequest(id) : null;

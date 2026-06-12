@@ -535,6 +535,29 @@ textarea:focus {
   background: #fff7f6;
 }
 
+.decision-card.selected {
+  border-color: var(--accent);
+  background: var(--soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+#ksoScheduleRequests [data-review-action] {
+  display: none;
+}
+
+.schedule-review {
+  display: grid;
+  gap: 10px;
+}
+
+.schedule-review-grid {
+  margin-top: 4px;
+}
+
+.schedule-review-card {
+  background: #fff;
+}
+
 .decision-card h3 {
   margin: 0;
   font-size: 15px;

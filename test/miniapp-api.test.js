@@ -2,8 +2,9 @@ const assert = require('node:assert/strict');
 const { createHmac } = require('node:crypto');
 const { after, beforeEach, describe, test } = require('node:test');
 const express = require('express');
+const { ROLES } = require('../src/constants');
 const { miniAppApiRouter } = require('../src/miniapp');
-const { saveEmployee } = require('../src/db');
+const { saveEmployee, saveProfile } = require('../src/db');
 const { buildBonusSummary } = require('../src/services/bonusService');
 const { createMiniAppLogin, validateMaxWebAppInitData } = require('../src/services/miniAppAuthService');
 
@@ -505,6 +506,56 @@ describe('miniapp API smoke', () => {
       assert.equal(response.status, 403);
       assert.equal(body.ok, false);
       assert.match(body.error, /прав|согласован/i);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('validates edited KSO schedule approval entries before writing to sheets', async () => {
+    process.env.MINIAPP_AUTH_REQUIRED = 'true';
+    saveEmployee('schedule-employee', 'Schedule Employee', null, true);
+    saveProfile('schedule-employee', 'Schedule Employee');
+    saveEmployee('schedule-admin', 'Schedule Admin', null, true, null, ROLES.ADMIN);
+    const employeeLogin = createMiniAppLogin('schedule-employee');
+    const adminLogin = createMiniAppLogin('schedule-admin');
+    const server = createTestServer();
+
+    try {
+      const created = await requestJson(server.baseUrl, '/api/miniapp/kso-schedule/month', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${employeeLogin.token}`
+        },
+        body: JSON.stringify({
+          month: '2026-06',
+          status: 'submitted',
+          entries: [
+            { date: '2026-06-01', hours: 10 },
+            { date: '2026-06-02', hours: 10 }
+          ]
+        })
+      });
+
+      assert.equal(created.response.status, 200);
+      const { response, body } = await requestJson(server.baseUrl, '/api/miniapp/kso-schedule/review', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminLogin.token}`
+        },
+        body: JSON.stringify({
+          requestId: created.body.request.id,
+          action: 'approved',
+          entries: [
+            { date: '2026-07-01', hours: 10 }
+          ]
+        })
+      });
+
+      assert.equal(response.status, 400);
+      assert.equal(body.ok, false);
+      assert.match(body.error, /даты|месяцу/i);
     } finally {
       await server.close();
     }
