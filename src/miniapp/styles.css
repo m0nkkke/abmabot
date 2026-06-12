@@ -446,6 +446,11 @@ textarea:focus {
   background: var(--soft);
 }
 
+.schedule-day.selected {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 2px rgba(27, 111, 106, 0.18);
+}
+
 .schedule-day.removal-target {
   border-color: var(--danger);
   background: #fff7f6;
