@@ -1,5 +1,6 @@
 const { google } = require('googleapis');
 const { MAX_PHOTOS_PER_RECORD } = require('./constants');
+const { getProfile, listEmployees } = require('./db');
 
 const SHEET_ID = process.env.GOOGLE_SHEET_ID;
 const REPORTS_SHEET_ID = process.env.GOOGLE_REPORTS_SHEET_ID || process.env.GOOGLE_REPORT_SHEET_ID || '';
@@ -1285,6 +1286,49 @@ function getKsoScheduleSheetId() {
   return getReportsSheetId();
 }
 
+const KSO_SCHEDULE_MONTH_NAMES = [
+  'январь',
+  'февраль',
+  'март',
+  'апрель',
+  'май',
+  'июнь',
+  'июль',
+  'август',
+  'сентябрь',
+  'октябрь',
+  'ноябрь',
+  'декабрь'
+];
+
+function getKsoScheduleSheetName(isoDate) {
+  const year = String(isoDate || '').slice(0, 4);
+  const month = Number(String(isoDate || '').slice(5, 7));
+  const monthName = KSO_SCHEDULE_MONTH_NAMES[month - 1] || String(isoDate || '').slice(0, 7);
+  return `${KSO_SCHEDULE_SHEET_NAME}-${monthName}-${year}`;
+}
+
+function shortKsoEmployeeName(fio) {
+  return String(fio || '').trim().split(/\s+/)[1] || String(fio || '').trim();
+}
+
+function getActiveKsoScheduleEmployees() {
+  return listEmployees()
+    .filter((employee) => employee.active === 1)
+    .map((employee) => {
+      const profile = getProfile(employee.user_id);
+      const fio = String(profile?.fio || employee.fio || '').trim();
+
+      return {
+        id: String(employee.user_id),
+        fio,
+        name: shortKsoEmployeeName(fio)
+      };
+    })
+    .filter((employee) => employee.fio)
+    .sort((left, right) => left.fio.localeCompare(right.fio, 'ru'));
+}
+
 function formatKsoDateHeader(isoDate) {
   const [year, month, day] = isoDate.split('-');
   return `${day}.${month}.${year}`;
@@ -1399,8 +1443,60 @@ async function ensureKsoAssignmentSheets(sheets, isoDate, historySheetName) {
   await ensureKsoSheetExists(sheets, KSO_ASSIGNMENT_SHEET_ID, historySheetName, getKsoHistoryHeaders(isoDate), 100, getKsoHistoryHeaders(isoDate).length);
 }
 
-async function ensureKsoScheduleSheet(sheets) {
-  await ensureKsoSheetExists(sheets, getKsoScheduleSheetId(), KSO_SCHEDULE_SHEET_NAME, KSO_SCHEDULE_HEADERS, 100, KSO_SCHEDULE_HEADERS.length);
+async function readKsoScheduleSheetRows(sheets, sheetName) {
+  const response = await withTimeout(
+    sheets.spreadsheets.values.get({
+      spreadsheetId: getKsoScheduleSheetId(),
+      range: `'${escapeSheetName(sheetName)}'!A:AH`,
+      majorDimension: 'ROWS',
+      valueRenderOption: 'UNFORMATTED_VALUE',
+      dateTimeRenderOption: 'FORMATTED_STRING'
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `получение листа графика КСО ${sheetName}`
+  );
+
+  return response.data.values || [];
+}
+
+async function ensureKsoScheduleSheet(sheets, isoDate) {
+  const sheetName = getKsoScheduleSheetName(isoDate);
+  await ensureKsoSheetExists(sheets, getKsoScheduleSheetId(), sheetName, KSO_SCHEDULE_HEADERS, 100, KSO_SCHEDULE_HEADERS.length);
+
+  const rows = await readKsoScheduleSheetRows(sheets, sheetName);
+  const existingFios = new Set(rows.slice(1).map((row) => normalizeKsoFio(row[1])).filter(Boolean));
+  const missingEmployees = getActiveKsoScheduleEmployees()
+    .filter((employee) => !existingFios.has(normalizeKsoFio(employee.fio)));
+
+  if (missingEmployees.length) {
+    const startRow = rows.length + 1;
+    const values = missingEmployees.map((employee, index) => {
+      const rowNumber = startRow + index;
+      return [
+        employee.id,
+        employee.fio,
+        ...Array.from({ length: 31 }, () => ''),
+        `=SUM(C${rowNumber}:AG${rowNumber})`
+      ];
+    });
+
+    await withTimeout(
+      sheets.spreadsheets.values.update({
+        spreadsheetId: getKsoScheduleSheetId(),
+        range: `'${escapeSheetName(sheetName)}'!A${startRow}:${columnNameByIndex(KSO_SCHEDULE_HEADERS.length)}${startRow + values.length - 1}`,
+        valueInputOption: 'USER_ENTERED',
+        requestBody: {
+          values
+        }
+      }, {
+        timeout: GOOGLE_REQUEST_TIMEOUT_MS
+      }),
+      `заполнение сотрудников на листе ${sheetName}`
+    );
+  }
+
+  return sheetName;
 }
 
 async function getKsoAssignmentSheetData(isoDate, historySheetName) {
@@ -1410,7 +1506,7 @@ async function getKsoAssignmentSheetData(isoDate, historySheetName) {
 
   const sheets = getSheetsClient();
   await ensureKsoAssignmentSheets(sheets, isoDate, historySheetName);
-  await ensureKsoScheduleSheet(sheets);
+  await ensureKsoScheduleSheet(sheets, isoDate);
 
   const ranges = [
     `'${escapeSheetName(KSO_EMPLOYEES_SHEET_NAME)}'!A:Z`,
@@ -1435,7 +1531,7 @@ async function getKsoAssignmentSheetData(isoDate, historySheetName) {
   );
 
   const valueRanges = response.data.valueRanges || [];
-  const scheduleRows = await getKsoScheduleSheetRows();
+  const scheduleRows = await getKsoScheduleSheetRows(isoDate);
 
   return {
     employees: valueRanges[0]?.values || [],
@@ -1449,22 +1545,10 @@ async function getKsoAssignmentSheetData(isoDate, historySheetName) {
   };
 }
 
-async function getKsoScheduleSheetRows() {
+async function getKsoScheduleSheetRows(isoDate) {
   const sheets = getSheetsClient();
-  const response = await withTimeout(
-    sheets.spreadsheets.values.get({
-      spreadsheetId: getKsoScheduleSheetId(),
-      range: `'${escapeSheetName(KSO_SCHEDULE_SHEET_NAME)}'!A:AH`,
-      majorDimension: 'ROWS',
-      valueRenderOption: 'UNFORMATTED_VALUE',
-      dateTimeRenderOption: 'FORMATTED_STRING'
-    }, {
-      timeout: GOOGLE_REQUEST_TIMEOUT_MS
-    }),
-    'получение листа графика КСО'
-  );
-
-  return response.data.values || [];
+  const sheetName = await ensureKsoScheduleSheet(sheets, isoDate);
+  return readKsoScheduleSheetRows(sheets, sheetName);
 }
 
 function normalizeKsoText(value) {
@@ -1711,13 +1795,13 @@ async function writeKsoScheduleStatus(profile, isoDate, status, historySheetName
   }
 
   const sheets = getSheetsClient();
-  await ensureKsoScheduleSheet(sheets);
-  const scheduleRows = await getKsoScheduleSheetRows();
+  const sheetName = await ensureKsoScheduleSheet(sheets, isoDate);
+  const scheduleRows = await getKsoScheduleSheetRows(isoDate);
   const headers = scheduleRows[0] || [];
   const row = findKsoScheduleRow(scheduleRows.slice(1), profile);
 
   if (!row) {
-    throw new Error(`Сотрудник ${profile.fio} не найден на листе ${KSO_SCHEDULE_SHEET_NAME}`);
+    throw new Error(`Сотрудник ${profile.fio} не найден на листе ${sheetName}`);
   }
 
   const rowNumber = scheduleRows.slice(1).indexOf(row) + 2;
@@ -1732,11 +1816,11 @@ async function writeKsoScheduleStatus(profile, isoDate, status, historySheetName
         valueInputOption: 'USER_ENTERED',
         data: [
           {
-            range: `'${escapeSheetName(KSO_SCHEDULE_SHEET_NAME)}'!${columnName}${rowNumber}:${columnName}${rowNumber}`,
+            range: `'${escapeSheetName(sheetName)}'!${columnName}${rowNumber}:${columnName}${rowNumber}`,
             values: [[cellValue]]
           },
           {
-            range: `'${escapeSheetName(KSO_SCHEDULE_SHEET_NAME)}'!${totalColumnName}${rowNumber}:${totalColumnName}${rowNumber}`,
+            range: `'${escapeSheetName(sheetName)}'!${totalColumnName}${rowNumber}:${totalColumnName}${rowNumber}`,
             values: [[`=SUM(C${rowNumber}:AG${rowNumber})`]]
           }
         ]
@@ -1758,13 +1842,13 @@ async function writeKsoScheduleMonthHours(profile, isoDateHours, historySheetNam
   }
 
   const sheets = getSheetsClient();
-  await ensureKsoScheduleSheet(sheets);
-  const scheduleRows = await getKsoScheduleSheetRows();
+  const sheetName = await ensureKsoScheduleSheet(sheets, isoDateHours[0].isoDate);
+  const scheduleRows = await getKsoScheduleSheetRows(isoDateHours[0].isoDate);
   const headers = scheduleRows[0] || [];
   const row = findKsoScheduleRow(scheduleRows.slice(1), profile);
 
   if (!row) {
-    throw new Error(`Сотрудник ${profile.fio} не найден на листе ${KSO_SCHEDULE_SHEET_NAME}`);
+    throw new Error(`Сотрудник ${profile.fio} не найден на листе ${sheetName}`);
   }
 
   const rowNumber = scheduleRows.slice(1).indexOf(row) + 2;
@@ -1772,13 +1856,13 @@ async function writeKsoScheduleMonthHours(profile, isoDateHours, historySheetNam
     const columnIndex = getKsoScheduleDateColumn(item.isoDate, headers);
     const columnName = columnNameByIndex(columnIndex + 1);
     return {
-      range: `'${escapeSheetName(KSO_SCHEDULE_SHEET_NAME)}'!${columnName}${rowNumber}:${columnName}${rowNumber}`,
+      range: `'${escapeSheetName(sheetName)}'!${columnName}${rowNumber}:${columnName}${rowNumber}`,
       values: [[item.hours || '']]
     };
   });
   const totalColumnName = columnNameByIndex(getKsoScheduleTotalColumn(headers) + 1);
   updates.push({
-    range: `'${escapeSheetName(KSO_SCHEDULE_SHEET_NAME)}'!${totalColumnName}${rowNumber}:${totalColumnName}${rowNumber}`,
+    range: `'${escapeSheetName(sheetName)}'!${totalColumnName}${rowNumber}:${totalColumnName}${rowNumber}`,
     values: [[`=SUM(C${rowNumber}:AG${rowNumber})`]]
   });
 
@@ -1894,7 +1978,7 @@ async function initializeKsoAssignmentSheet(isoDate, employees, shops, historySh
 
   const sheets = getSheetsClient();
   await ensureKsoAssignmentSheets(sheets, isoDate, historySheetName);
-  await ensureKsoScheduleSheet(sheets);
+  const scheduleSheetName = await ensureKsoScheduleSheet(sheets, isoDate);
 
   const employeeRows = buildKsoEmployeeRows(employees);
   const scheduleRows = buildKsoScheduleRows(employees);
@@ -1927,7 +2011,7 @@ async function initializeKsoAssignmentSheet(isoDate, employees, shops, historySh
   await withTimeout(
     sheets.spreadsheets.values.clear({
       spreadsheetId: getKsoScheduleSheetId(),
-      range: `'${escapeSheetName(KSO_SCHEDULE_SHEET_NAME)}'!A:AH`
+      range: `'${escapeSheetName(scheduleSheetName)}'!A:AH`
     }, {
       timeout: GOOGLE_REQUEST_TIMEOUT_MS
     }),
@@ -1979,7 +2063,7 @@ async function initializeKsoAssignmentSheet(isoDate, employees, shops, historySh
   await withTimeout(
     sheets.spreadsheets.values.update({
       spreadsheetId: getKsoScheduleSheetId(),
-      range: `'${escapeSheetName(KSO_SCHEDULE_SHEET_NAME)}'!A1:${columnNameByIndex(KSO_SCHEDULE_HEADERS.length)}${scheduleRows.length}`,
+      range: `'${escapeSheetName(scheduleSheetName)}'!A1:${columnNameByIndex(KSO_SCHEDULE_HEADERS.length)}${scheduleRows.length}`,
       valueInputOption: 'USER_ENTERED',
       requestBody: {
         values: scheduleRows

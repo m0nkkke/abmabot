@@ -1054,7 +1054,7 @@ async function getScheduleMonthSummary(isoDate) {
 
   const pending = (async () => {
     try {
-      const [headers = [], ...rows] = await getKsoScheduleSheetRows();
+      const [headers = [], ...rows] = await getKsoScheduleSheetRows(isoDate);
       const summary = buildScheduleMonthSummaryFromRows(isoDate, headers, rows);
       scheduleSummaryCache.set(cacheKey, {
         expiresAt: Date.now() + SCHEDULE_SUMMARY_CACHE_TTL_MS,
