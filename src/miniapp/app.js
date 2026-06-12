@@ -8,7 +8,9 @@ const state = {
   recentFixations: [],
   shopSelectionTouched: false,
   bonusLoaded: false,
-  ksoScheduleDays: []
+  ksoScheduleDays: [],
+  ksoScheduleRequests: [],
+  ksoScheduleRequestsLoaded: false
 };
 
 const LAST_SELECTION_KEY = 'miniappLastSelection';
@@ -921,20 +923,52 @@ function setKsoScheduleRange(startDate, endDate) {
   renderKsoScheduleCalendar();
 }
 
+function getKsoScheduleTemplateScope() {
+  const month = ksoScheduleForm?.month.value || currentMonthInput();
+  const totalDays = daysInMonth(month);
+  const monthStart = buildMonthDate(month, 1);
+  const monthEnd = buildMonthDate(month, totalDays);
+  const startDate = ksoScheduleForm?.rangeStart.value || '';
+  const endDate = ksoScheduleForm?.rangeEnd.value || '';
+
+  if (!startDate || !endDate) {
+    return { from: monthStart, to: monthEnd };
+  }
+
+  const [from, to] = startDate <= endDate ? [startDate, endDate] : [endDate, startDate];
+  return {
+    from: from < monthStart ? monthStart : from,
+    to: to > monthEnd ? monthEnd : to
+  };
+}
+
 function applyKsoScheduleTemplate(template) {
   const hours = template === '2-2' ? 14 : 10;
+  const scope = getKsoScheduleTemplateScope();
   if (template === 'clear') {
-    state.ksoScheduleDays = state.ksoScheduleDays.map((day) => ({ ...day, selected: false, hours }));
+    state.ksoScheduleDays = state.ksoScheduleDays.map((day) => {
+      if (day.date < scope.from || day.date > scope.to) {
+        return day;
+      }
+
+      return { ...day, selected: false, hours };
+    });
     ksoScheduleForm.hours.value = 10;
     renderKsoScheduleCalendar();
     return;
   }
 
   ksoScheduleForm.hours.value = hours;
-  state.ksoScheduleDays = state.ksoScheduleDays.map((day, index) => {
+  let scopeIndex = -1;
+  state.ksoScheduleDays = state.ksoScheduleDays.map((day) => {
+    if (day.date < scope.from || day.date > scope.to) {
+      return day;
+    }
+
+    scopeIndex += 1;
     let selected = false;
     if (template === '2-2') {
-      selected = Math.floor(index / 2) % 2 === 0;
+      selected = Math.floor(scopeIndex / 2) % 2 === 0;
     } else if (template === '5-2') {
       selected = new Date(`${day.date}T00:00:00`).getDay() >= 1 && new Date(`${day.date}T00:00:00`).getDay() <= 5;
     } else if (template === '6-1') {
@@ -946,6 +980,56 @@ function applyKsoScheduleTemplate(template) {
   renderKsoScheduleCalendar();
 }
 
+function getOwnKsoScheduleDraft() {
+  const userId = String(state.config?.user?.userId || '');
+  const month = ksoScheduleForm?.month.value || currentMonthInput();
+
+  return (state.ksoScheduleRequests || [])
+    .filter((request) => (
+      request.status === 'draft'
+      && request.month === month
+      && request.requestType !== 'removal'
+      && String(request.userId || '') === userId
+    ))
+    .sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0];
+}
+
+function applyKsoScheduleDraftToCalendar() {
+  if (!state.ksoScheduleRequestsLoaded || !state.ksoScheduleDays.length || !ksoScheduleForm) {
+    return;
+  }
+
+  const draft = getOwnKsoScheduleDraft();
+  if (!draft) {
+    ksoScheduleForm.requestId.value = '';
+    return;
+  }
+
+  const entriesByDate = new Map((draft.entries || []).map((entry) => [entry.isoDate || entry.date, entry]));
+  state.ksoScheduleDays = state.ksoScheduleDays.map((day) => {
+    const entry = entriesByDate.get(day.date);
+    const hours = normalizeHours(entry?.hours, 0);
+    return {
+      ...day,
+      selected: hours > 0,
+      hours: hours > 0 ? hours : normalizeHours(ksoScheduleForm.hours.value)
+    };
+  });
+  ksoScheduleForm.requestId.value = draft.id || '';
+  renderKsoScheduleCalendar();
+}
+
+function setKsoScheduleLoading(isLoading) {
+  if (!ksoScheduleForm) {
+    return;
+  }
+
+  ksoScheduleForm.classList.toggle('schedule-loading', isLoading);
+  if (isLoading) {
+    setStatus(ksoScheduleForm.querySelector('.status'), 'Загружаю календарь...', '');
+  }
+}
+
 async function loadKsoScheduleMonth() {
   if (!ksoScheduleForm) {
     return;
@@ -953,23 +1037,30 @@ async function loadKsoScheduleMonth() {
 
   const month = ksoScheduleForm.month.value || currentMonthInput();
   const totalDays = daysInMonth(month);
-  const result = await fetchMiniAppJson(`/api/miniapp/kso-schedule/month?${new URLSearchParams({ month }).toString()}`);
-  const summaryByDate = new Map((result.summary?.days || []).map((day) => [day.date, day]));
+  setKsoScheduleLoading(true);
+  try {
+    const result = await fetchMiniAppJson(`/api/miniapp/kso-schedule/month?${new URLSearchParams({ month }).toString()}`);
+    const summaryByDate = new Map((result.summary?.days || []).map((day) => [day.date, day]));
 
-  state.ksoScheduleDays = Array.from({ length: totalDays }, (_, index) => {
-    const day = index + 1;
-    const date = buildMonthDate(month, day);
-    const summary = summaryByDate.get(date) || {};
-    return {
-      date,
-      day,
-      selected: false,
-      hours: normalizeHours(ksoScheduleForm.hours.value),
-      workingCount: summary.workingCount || 0,
-      restCount: summary.restCount || 0
-    };
-  });
-  renderKsoScheduleCalendar();
+    state.ksoScheduleDays = Array.from({ length: totalDays }, (_, index) => {
+      const day = index + 1;
+      const date = buildMonthDate(month, day);
+      const summary = summaryByDate.get(date) || {};
+      return {
+        date,
+        day,
+        selected: false,
+        hours: normalizeHours(ksoScheduleForm.hours.value),
+        workingCount: summary.workingCount || 0,
+        restCount: summary.restCount || 0
+      };
+    });
+    renderKsoScheduleCalendar();
+    applyKsoScheduleDraftToCalendar();
+    setStatus(ksoScheduleForm.querySelector('.status'), '', '');
+  } finally {
+    setKsoScheduleLoading(false);
+  }
 }
 
 function statusText(status) {
@@ -1037,7 +1128,10 @@ async function loadKsoScheduleRequests() {
   }
 
   const result = await fetchMiniAppJson('/api/miniapp/kso-schedule/requests');
-  renderKsoScheduleRequests(result.requests || []);
+  state.ksoScheduleRequests = result.requests || [];
+  state.ksoScheduleRequestsLoaded = true;
+  renderKsoScheduleRequests(state.ksoScheduleRequests);
+  applyKsoScheduleDraftToCalendar();
 }
 
 function renderKsoScheduleTable(table) {
@@ -1096,9 +1190,9 @@ async function saveKsoSchedule(statusMode = 'submitted') {
       }))
     });
     ksoScheduleForm.requestId.value = result.request?.id || '';
-    setStatus(status, result.message || 'График сохранен.', 'success');
     await loadKsoScheduleMonth();
     await loadKsoScheduleRequests();
+    setStatus(status, result.message || 'График сохранен.', 'success');
   } catch (error) {
     setStatus(status, error.message, 'error');
   } finally {
