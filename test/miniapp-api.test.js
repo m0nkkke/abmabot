@@ -497,6 +497,36 @@ describe('miniapp API smoke', () => {
     }
   });
 
+  test('stores KSO schedule shift type in draft without writing to sheets', async () => {
+    const server = createTestServer();
+
+    try {
+      const { response, body } = await requestJson(server.baseUrl, '/api/miniapp/kso-schedule/month', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          fio: 'Lunch Schedule User',
+          month: '2026-06',
+          status: 'draft',
+          shiftType: 'lunch',
+          entries: [
+            { date: '2026-06-01', hours: 10, shiftType: 'lunch' },
+            { date: '2026-06-02', hours: 10, shiftType: 'morning' }
+          ]
+        })
+      });
+
+      assert.equal(response.status, 200);
+      assert.equal(body.ok, true);
+      assert.equal(body.request.entries[0].shiftType, 'lunch');
+      assert.equal(body.request.entries[1].shiftType, 'morning');
+    } finally {
+      await server.close();
+    }
+  });
+
   test('requires reviewer rights for KSO schedule table before reading sheets', async () => {
     const server = createTestServer();
 
@@ -641,6 +671,42 @@ describe('miniapp API smoke', () => {
       assert.equal(response.status, 400);
       assert.equal(body.ok, false);
       assert.match(body.error, /даты|месяцу/i);
+    } finally {
+      await server.close();
+    }
+  });
+
+  test('rejects revoke for non-approved KSO schedule before writing to sheets', async () => {
+    process.env.MINIAPP_AUTH_REQUIRED = 'true';
+    const requestId = `revoke-draft-request-${Date.now()}`;
+    saveEmployee('revoke-admin', 'Revoke Admin', null, true, null, ROLES.ADMIN);
+    saveKsoScheduleRequest({
+      id: requestId,
+      userId: 'revoke-user',
+      fio: 'Revoke User',
+      month: '2026-06',
+      requestType: 'month',
+      status: 'draft',
+      entries: [
+        { isoDate: '2026-06-01', hours: 10, shiftType: 'morning' }
+      ]
+    });
+    const adminLogin = createMiniAppLogin('revoke-admin');
+    const server = createTestServer();
+
+    try {
+      const { response, body } = await requestJson(server.baseUrl, '/api/miniapp/kso-schedule/revoke-approved', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${adminLogin.token}`
+        },
+        body: JSON.stringify({ requestId })
+      });
+
+      assert.equal(response.status, 404);
+      assert.equal(body.ok, false);
+      assert.match(body.error, /согласованный|approved|график/i);
     } finally {
       await server.close();
     }

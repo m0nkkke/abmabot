@@ -472,6 +472,13 @@ textarea:focus {
   padding: 7px 8px;
 }
 
+.schedule-day select {
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 8px;
+  font-size: 13px;
+}
+
 .schedule-counts {
   display: grid;
   gap: 2px;

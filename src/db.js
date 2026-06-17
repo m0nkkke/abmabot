@@ -238,6 +238,18 @@ const updateApprovedKsoScheduleRequestStmt = db.prepare(`
     AND request_type = 'month'
     AND archived_at IS NULL
 `);
+const revokeApprovedKsoScheduleRequestStmt = db.prepare(`
+  UPDATE kso_schedule_requests
+  SET status = 'rejected',
+      reviewed_by = @reviewedBy,
+      reviewed_at = CURRENT_TIMESTAMP,
+      updated_at = CURRENT_TIMESTAMP,
+      comment = COALESCE(@comment, comment)
+  WHERE id = @id
+    AND status = 'approved'
+    AND request_type = 'month'
+    AND archived_at IS NULL
+`);
 
 const getConsentStmt = db.prepare('SELECT user_id, policy_version, text, accepted_at FROM consents WHERE user_id = ?');
 const upsertConsentStmt = db.prepare(`
@@ -614,6 +626,16 @@ function updateApprovedKsoScheduleRequest(id, reviewedBy, entries, comment = '')
   return result.changes > 0 ? getKsoScheduleRequest(id) : null;
 }
 
+function revokeApprovedKsoScheduleRequest(id, reviewedBy, comment = '') {
+  const result = revokeApprovedKsoScheduleRequestStmt.run({
+    id: String(id),
+    reviewedBy: String(reviewedBy),
+    comment
+  });
+
+  return result.changes > 0 ? getKsoScheduleRequest(id) : null;
+}
+
 function getConsent(userId) {
   return getConsentStmt.get(String(userId));
 }
@@ -864,6 +886,7 @@ module.exports = {
   reviewKsoScheduleRequest,
   archiveKsoScheduleRequest,
   updateApprovedKsoScheduleRequest,
+  revokeApprovedKsoScheduleRequest,
   getConsent,
   saveConsent,
   deleteConsent,

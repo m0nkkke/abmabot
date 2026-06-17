@@ -9,6 +9,7 @@ const {
   listEmployees,
   listKsoScheduleRequests,
   reviewKsoScheduleRequest,
+  revokeApprovedKsoScheduleRequest,
   saveKsoScheduleRequest,
   updateApprovedKsoScheduleRequest
 } = require('../db');
@@ -93,6 +94,19 @@ function normalizeScheduleStatus(value) {
   return '';
 }
 
+function normalizeShiftType(value) {
+  const normalized = normalizeText(value).toLowerCase();
+  if (['morning', 'утро', 'утренняя'].includes(normalized)) {
+    return 'morning';
+  }
+
+  if (['lunch', 'afternoon', 'day', 'обед', 'обеден', 'обеденная'].includes(normalized)) {
+    return 'lunch';
+  }
+
+  return '';
+}
+
 function getMiniAppProfile(req, data) {
   const userId = req?.miniAppUserId ? String(req.miniAppUserId) : '';
 
@@ -164,6 +178,7 @@ async function createKsoScheduleStatus(data, req) {
 function normalizeScheduleEntries(data) {
   const month = parseMonth(data.month);
   const entries = Array.isArray(data.entries) ? data.entries : [];
+  const fallbackShiftType = normalizeShiftType(data.shiftType) || 'morning';
 
   if (!month || entries.length === 0) {
     throw createValidationError('Выберите месяц и хотя бы один день графика');
@@ -180,9 +195,15 @@ function normalizeScheduleEntries(data) {
       throw createValidationError('Количество часов должно быть от 0 до 24');
     }
 
+    const entryShiftType = normalizeShiftType(entry.shiftType || fallbackShiftType);
+    if (hours > 0 && !entryShiftType) {
+      throw createValidationError('Выберите тип смены: утро или обед');
+    }
+
     return {
       isoDate,
-      hours: hours > 0 ? hours : ''
+      hours: hours > 0 ? hours : '',
+      shiftType: hours > 0 ? entryShiftType : ''
     };
   });
 }
@@ -208,7 +229,8 @@ function entriesSignature(entries) {
   return JSON.stringify((entries || [])
     .map((entry) => ({
       isoDate: entry.isoDate || entry.date,
-      hours: normalizeNumber(entry.hours)
+      hours: normalizeNumber(entry.hours),
+      shiftType: normalizeShiftType(entry.shiftType) || ''
     }))
     .sort((left, right) => String(left.isoDate).localeCompare(String(right.isoDate))));
 }
@@ -247,7 +269,9 @@ async function notifyScheduleApplicant(request, action, wasEdited = false) {
   const totalHours = request.entries.reduce((sum, entry) => sum + normalizeNumber(entry.hours), 0);
   const workDays = request.entries.filter((entry) => normalizeNumber(entry.hours) > 0).length;
   const isRemoval = request.requestType === 'removal';
-  const title = action === 'approved'
+  const title = action === 'revoked'
+    ? 'Согласованный график отозван. Можно заполнить график заново.'
+    : action === 'approved'
     ? isRemoval
       ? 'Заявка на снятие смены согласована.'
       : wasEdited
@@ -266,6 +290,8 @@ async function notifyScheduleApplicant(request, action, wasEdited = false) {
     '',
     action === 'approved'
       ? 'Откройте miniapp -> График работы, чтобы посмотреть утвержденный график.'
+      : action === 'revoked'
+        ? 'Откройте miniapp -> График работы, чтобы заполнить график заново.'
       : 'Откройте miniapp -> График работы, чтобы посмотреть статус заявки.'
   ].join('\n');
 
@@ -367,6 +393,7 @@ async function approveKsoScheduleRequest(data, req) {
 
     editedEntries = normalizeScheduleEntries({
       month: existingRequest.month,
+      shiftType: data.shiftType,
       entries: data.entries
     });
   }
@@ -418,6 +445,7 @@ async function updateApprovedKsoScheduleMonth(data, req) {
 
   const entries = normalizeScheduleEntries({
     month: existing.month,
+    shiftType: data.shiftType,
     entries: data.entries
   });
   const updated = updateApprovedKsoScheduleRequest(requestId, reviewerId, entries, normalizeText(data.comment));
@@ -434,9 +462,41 @@ async function updateApprovedKsoScheduleMonth(data, req) {
   };
 }
 
+async function revokeApprovedKsoScheduleMonth(data, req) {
+  const reviewerId = assertReviewer(req);
+  const requestId = normalizeText(data.requestId);
+  if (!requestId) {
+    throw createValidationError('Укажите согласованный график');
+  }
+
+  const existing = getKsoScheduleRequest(requestId);
+  if (!existing || existing.status !== 'approved' || existing.requestType !== 'month') {
+    throw createValidationError('Можно отозвать только согласованный график месяца', 404);
+  }
+
+  const clearedEntries = existing.entries.map((entry) => ({
+    ...entry,
+    hours: '',
+    shiftType: ''
+  }));
+  const revoked = revokeApprovedKsoScheduleRequest(requestId, reviewerId, normalizeText(data.comment));
+  if (!revoked) {
+    throw createValidationError('Согласованный график не найден или уже недоступен', 404);
+  }
+
+  await updateScheduleMonth(reviewerId, { fio: existing.fio }, clearedEntries);
+  await notifyScheduleApplicant(revoked, 'revoked', false);
+
+  return {
+    request: serializeRequest(revoked),
+    message: 'Согласованный график отозван, сотрудник может заполнить его заново.'
+  };
+}
+
 module.exports = {
   approveKsoScheduleRequest,
   archiveRejectedKsoScheduleRequest,
+  revokeApprovedKsoScheduleMonth,
   updateApprovedKsoScheduleMonth,
   createKsoScheduleMonth,
   createKsoScheduleStatus,
