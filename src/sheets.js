@@ -1339,11 +1339,15 @@ function getActiveKsoScheduleEmployees() {
       return {
         id: String(employee.user_id),
         fio,
-        name: shortKsoEmployeeName(fio)
+        name: shortKsoEmployeeName(fio),
+        region: String(profile?.region || '').trim() || 'Без региона'
       };
     })
     .filter((employee) => employee.fio)
-    .sort((left, right) => left.fio.localeCompare(right.fio, 'ru'));
+    .sort((left, right) => (
+      left.region.localeCompare(right.region, 'ru')
+      || left.fio.localeCompare(right.fio, 'ru')
+    ));
 }
 
 function formatKsoDateHeader(isoDate) {
@@ -1486,47 +1490,35 @@ async function ensureKsoScheduleShiftSheet(sheets, isoDate, shiftType = 'morning
   await ensureKsoSheetExists(sheets, getKsoScheduleSheetId(), sheetName, KSO_SCHEDULE_HEADERS, 100, KSO_SCHEDULE_HEADERS.length);
 
   const rows = await readKsoScheduleSheetRows(sheets, sheetName);
-  const existingFios = new Set(rows.slice(1).map((row) => normalizeKsoFio(row[1])).filter(Boolean));
-  const missingEmployees = getActiveKsoScheduleEmployees()
-    .filter((employee) => !existingFios.has(normalizeKsoFio(employee.fio)));
-
-  if (missingEmployees.length) {
-    const startRow = rows.length + 1;
-    const values = missingEmployees.map((employee, index) => {
-      const rowNumber = startRow + index;
-      return [
-        employee.id,
-        employee.fio,
-        ...Array.from({ length: 31 }, () => ''),
-        buildKsoScheduleTotalFormula(rowNumber)
-      ];
-    });
-
-    await withTimeout(
-      sheets.spreadsheets.values.update({
-        spreadsheetId: getKsoScheduleSheetId(),
-        range: `'${escapeSheetName(sheetName)}'!A${startRow}:${columnNameByIndex(KSO_SCHEDULE_HEADERS.length)}${startRow + values.length - 1}`,
-        valueInputOption: 'USER_ENTERED',
-        requestBody: {
-          values
-        }
-      }, {
-        timeout: GOOGLE_REQUEST_TIMEOUT_MS
-      }),
-      `заполнение сотрудников на листе ${sheetName}`
-    );
-  }
+  const values = buildKsoScheduleRows(getActiveKsoScheduleEmployees(), rows);
+  await withTimeout(
+    sheets.spreadsheets.values.clear({
+      spreadsheetId: getKsoScheduleSheetId(),
+      range: `'${escapeSheetName(sheetName)}'!A:AH`
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `очистка ростера на листе ${sheetName}`
+  );
+  await withTimeout(
+    sheets.spreadsheets.values.update({
+      spreadsheetId: getKsoScheduleSheetId(),
+      range: `'${escapeSheetName(sheetName)}'!A1:${columnNameByIndex(KSO_SCHEDULE_HEADERS.length)}${values.length}`,
+      valueInputOption: 'USER_ENTERED',
+      requestBody: {
+        values
+      }
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    `группировка сотрудников на листе ${sheetName}`
+  );
 
   return sheetName;
 }
 
 async function ensureKsoScheduleSheets(sheets, isoDate) {
-  const names = [];
-  for (const shiftType of Object.keys(KSO_SCHEDULE_SHIFT_TYPES)) {
-    names.push(await ensureKsoScheduleShiftSheet(sheets, isoDate, shiftType));
-  }
-
-  return names;
+  return [await ensureKsoScheduleShiftSheet(sheets, isoDate, 'morning')];
 }
 
 function mergeKsoScheduleRows(scheduleSheetsRows) {
@@ -1881,7 +1873,7 @@ function formatKsoScheduleCell(item) {
 }
 
 function buildKsoScheduleTotalFormula(rowNumber) {
-  return `=SUM(ARRAYFORMULA(IFERROR(VALUE(REGEXEXTRACT(C${rowNumber}:AG${rowNumber},"^([0-9]+(?:[.,][0-9]+)?)")),0)))`;
+  return `=СУММ(ARRAYFORMULA(ЕСЛИОШИБКА(ЗНАЧЕН(REGEXEXTRACT(TO_TEXT(C${rowNumber}:AG${rowNumber}); "\\d+")); 0)))`;
 }
 
 async function writeKsoScheduleStatus(profile, isoDate, status, historySheetName) {
@@ -1977,19 +1969,50 @@ async function writeKsoScheduleMonthHours(profile, isoDateHours, historySheetNam
   );
 }
 
-function buildKsoScheduleRows(employees) {
-  return [
-    KSO_SCHEDULE_HEADERS,
-    ...employees.map((employee, index) => {
-      const rowNumber = index + 2;
-      return [
-        employee.id,
-        employee.fio,
+function buildKsoScheduleRows(employees, existingRows = []) {
+  const existingByFio = new Map(
+    (existingRows || [])
+      .slice(1)
+      .filter((row) => String(row[0] || '').trim() && String(row[1] || '').trim())
+      .map((row) => [normalizeKsoFio(row[1]), row])
+  );
+  const grouped = new Map();
+
+  employees.forEach((employee) => {
+    const region = employee.region || 'Без региона';
+    if (!grouped.has(region)) {
+      grouped.set(region, []);
+    }
+    grouped.get(region).push(employee);
+  });
+
+  const rows = [KSO_SCHEDULE_HEADERS];
+  [...grouped.entries()]
+    .sort(([left], [right]) => left.localeCompare(right, 'ru'))
+    .forEach(([region, regionEmployees]) => {
+      rows.push([
+        '',
+        region,
         ...Array.from({ length: 31 }, () => ''),
-        buildKsoScheduleTotalFormula(rowNumber)
-      ];
-    })
-  ];
+        ''
+      ]);
+
+      regionEmployees
+        .sort((left, right) => left.fio.localeCompare(right.fio, 'ru'))
+        .forEach((employee) => {
+          const rowNumber = rows.length + 1;
+          const existing = existingByFio.get(normalizeKsoFio(employee.fio)) || [];
+          const dayValues = Array.from({ length: 31 }, (_, index) => existing[index + 2] || '');
+          rows.push([
+            employee.id,
+            employee.fio,
+            ...dayValues,
+            buildKsoScheduleTotalFormula(rowNumber)
+          ]);
+        });
+    });
+
+  return rows;
 }
 
 function buildKsoHistoryRows(isoDate, employees) {

@@ -294,12 +294,14 @@ function parseSchedule(rows, isoDate) {
 
   return {
     dateColumnIndex: dateIndex,
-    rows: dataRows.map((row, index) => ({
-      rowNumber: index + 2,
-      id: String(getCell(row, columns, ['№', 'ID сотрудника', 'ID'], 0) || '').trim(),
-      fio: String(getCell(row, columns, ['ФИО', 'Имя'], 1) || '').trim(),
-      status: dateIndex >= 0 ? String(row[dateIndex] || '').trim() : ''
-    }))
+    rows: dataRows
+      .map((row, index) => ({
+        rowNumber: index + 2,
+        id: String(getCell(row, columns, ['№', 'ID сотрудника', 'ID'], 0) || '').trim(),
+        fio: String(getCell(row, columns, ['ФИО', 'Имя'], 1) || '').trim(),
+        status: dateIndex >= 0 ? String(row[dateIndex] || '').trim() : ''
+      }))
+      .filter((row) => row.id && row.fio)
   };
 }
 
@@ -1092,14 +1094,15 @@ function buildScheduleMonthSummaryFromRows(isoDate, headers, rows) {
   const year = Number(isoDate.slice(0, 4));
   const month = Number(isoDate.slice(5, 7));
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
-  const employeesCount = rows.filter((row) => String(row[1] || '').trim()).length;
+  const employeeRows = rows.filter((row) => String(row[0] || '').trim() && String(row[1] || '').trim());
+  const employeesCount = employeeRows.length;
 
   const days = Array.from({ length: lastDay }, (_, index) => {
     const day = index + 1;
     const date = formatIsoDate(new Date(Date.UTC(year, month - 1, day)));
     const columnIndex = headers.findIndex((header) => Number(header) === day);
     const actualIndex = columnIndex >= 0 ? columnIndex : day + 1;
-    const workingCount = rows.reduce((count, row) => count + (numberValue(row[actualIndex], 0) > 0 ? 1 : 0), 0);
+    const workingCount = employeeRows.reduce((count, row) => count + (numberValue(row[actualIndex], 0) > 0 ? 1 : 0), 0);
 
     return {
       date,
@@ -1127,6 +1130,7 @@ function invalidateScheduleMonthSummary(isoDate) {
 async function getScheduleMonthTable(isoDate) {
   const data = await loadAssignmentData(isoDate);
   const [headers = [], ...rows] = data.rawSchedule || [];
+  const employeeRows = rows.filter((row) => String(row[0] || '').trim() && String(row[1] || '').trim());
   const year = Number(isoDate.slice(0, 4));
   const month = Number(isoDate.slice(5, 7));
   const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
@@ -1136,7 +1140,7 @@ async function getScheduleMonthTable(isoDate) {
   return {
     month: isoDate.slice(0, 7),
     days,
-    rows: rows
+    rows: employeeRows
       .filter((row) => String(row[1] || '').trim())
       .map((row) => {
         const dayValues = {};
@@ -1212,11 +1216,15 @@ function buildInitEmployees() {
       return {
         id: String(employee.user_id),
         fio,
-        name: shortEmployeeName(fio)
+        name: shortEmployeeName(fio),
+        region: String(profile?.region || '').trim() || 'Без региона'
       };
     })
     .filter((employee) => employee.fio)
-    .sort((left, right) => left.fio.localeCompare(right.fio, 'ru'));
+    .sort((left, right) => (
+      left.region.localeCompare(right.region, 'ru')
+      || left.fio.localeCompare(right.fio, 'ru')
+    ));
 }
 
 function buildInitShops() {
