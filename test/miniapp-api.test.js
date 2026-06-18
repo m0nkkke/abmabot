@@ -527,6 +527,46 @@ describe('miniapp API smoke', () => {
     }
   });
 
+  test('updates KSO schedule region independently from schedule submit', async () => {
+    process.env.MINIAPP_AUTH_REQUIRED = 'true';
+    saveEmployee('schedule-region-user', 'Schedule Region User', null, true);
+    saveProfile('schedule-region-user', 'Schedule Region User');
+    const login = createMiniAppLogin('schedule-region-user');
+    const server = createTestServer();
+
+    try {
+      const bootstrap = await requestJson(server.baseUrl, '/api/miniapp/bootstrap', {
+        headers: {
+          Authorization: `Bearer ${login.token}`
+        }
+      });
+      const region = bootstrap.body.regions[0].name;
+
+      const updated = await requestJson(server.baseUrl, '/api/miniapp/kso-schedule/region', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${login.token}`
+        },
+        body: JSON.stringify({ region })
+      });
+
+      assert.equal(updated.response.status, 200);
+      assert.equal(updated.body.ok, true);
+      assert.equal(updated.body.profile.region, region);
+
+      const refreshed = await requestJson(server.baseUrl, '/api/miniapp/bootstrap', {
+        headers: {
+          Authorization: `Bearer ${login.token}`
+        }
+      });
+
+      assert.equal(refreshed.body.user.profile.region, region);
+    } finally {
+      await server.close();
+    }
+  });
+
   test('requires reviewer rights for KSO schedule table before reading sheets', async () => {
     const server = createTestServer();
 

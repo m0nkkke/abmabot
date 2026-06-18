@@ -1164,11 +1164,14 @@ function updateKsoScheduleEmployeeControls() {
   if (submitButton) {
     submitButton.disabled = disabled;
   }
-  ['scheduleRegion', 'shiftType', 'hours', 'applyHoursToAll', 'rangeStart', 'rangeEnd'].forEach((name) => {
+  ['shiftType', 'hours', 'applyHoursToAll', 'rangeStart', 'rangeEnd'].forEach((name) => {
     if (ksoScheduleForm[name]) {
       ksoScheduleForm[name].disabled = disabled;
     }
   });
+  if (ksoScheduleForm.scheduleRegion) {
+    ksoScheduleForm.scheduleRegion.disabled = false;
+  }
 }
 
 async function loadKsoScheduleMonth() {
@@ -1735,6 +1738,33 @@ async function requestRemoveTomorrowShift() {
   }
 }
 
+async function saveKsoScheduleRegion() {
+  if (!ksoScheduleForm?.scheduleRegion) {
+    return;
+  }
+
+  const status = ksoScheduleForm.querySelector('.status');
+  const region = getScheduleRegionName();
+  if (!region) {
+    return;
+  }
+
+  ksoScheduleForm.scheduleRegion.disabled = true;
+  try {
+    const result = await submitJson('/api/miniapp/kso-schedule/region', { region });
+    state.profile = result.profile || state.profile;
+    if (state.config?.user) {
+      state.config.user.profile = result.profile || state.config.user.profile;
+    }
+    await loadKsoScheduleRequests();
+    setStatus(status, result.message || 'Регион графика сохранен.', 'success');
+  } catch (error) {
+    setStatus(status, error.message, 'error');
+  } finally {
+    ksoScheduleForm.scheduleRegion.disabled = false;
+  }
+}
+
 async function handleKsoScheduleSubmit(event) {
   event.preventDefault();
   await saveKsoSchedule('submitted');
@@ -2067,6 +2097,9 @@ async function init() {
     });
     renderKsoScheduleReviewPanel();
     renderKsoApprovedSchedulePanel();
+  });
+  ksoScheduleForm?.scheduleRegion?.addEventListener('change', () => {
+    saveKsoScheduleRegion().catch(() => {});
   });
   ksoScheduleForm?.querySelectorAll('[data-schedule-template]').forEach((button) => {
     button.addEventListener('click', () => applyKsoScheduleTemplate(button.dataset.scheduleTemplate));

@@ -22,6 +22,7 @@ const {
   getKsoScheduleTable,
   listKsoScheduleRequestItems,
   revokeApprovedKsoScheduleMonth,
+  updateKsoScheduleRegion,
   updateApprovedKsoScheduleMonth
 } = require('./services/ksoScheduleService');
 const { getKsoDecisionModel } = require('./services/ksoDecisionService');
@@ -138,6 +139,7 @@ postAction(['/reports', '/text-report'], createTextReport);
 postAction(['/kso', '/kso-report'], createKsoReport);
 postAction('/kso-schedule', createKsoScheduleStatus);
 postAction('/kso-schedule/month', createKsoScheduleMonth);
+postAction('/kso-schedule/region', updateKsoScheduleRegion);
 postAction('/kso-schedule/review', approveKsoScheduleRequest);
 postAction('/kso-schedule/archive', archiveRejectedKsoScheduleRequest);
 postAction('/kso-schedule/update-approved', updateApprovedKsoScheduleMonth);

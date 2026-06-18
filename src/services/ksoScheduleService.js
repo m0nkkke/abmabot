@@ -7,6 +7,7 @@ const {
   getUserRole,
   isAllowedUser,
   listEmployees,
+  listCatalogRegions,
   listKsoScheduleRequests,
   reviewKsoScheduleRequest,
   revokeApprovedKsoScheduleRequest,
@@ -331,6 +332,29 @@ async function createKsoScheduleMonth(data, req) {
   };
 }
 
+async function updateKsoScheduleRegion(data, req) {
+  const { userId, profile } = getMiniAppProfile(req, data);
+  const region = normalizeText(data.region);
+  if (!region) {
+    throw createValidationError('Выберите регион графика');
+  }
+
+  const exists = listCatalogRegions().some((item) => item.name === region);
+  if (!exists) {
+    throw createValidationError('Выбранный регион не найден в справочнике');
+  }
+
+  updateEmployeeShop(userId, region, profile.shop || '');
+
+  return {
+    profile: {
+      ...profile,
+      region
+    },
+    message: 'Регион графика сохранен.'
+  };
+}
+
 async function getKsoScheduleMonth(data) {
   const month = parseMonth(data.month);
   if (!month) {
@@ -507,6 +531,7 @@ module.exports = {
   revokeApprovedKsoScheduleMonth,
   updateApprovedKsoScheduleMonth,
   createKsoScheduleMonth,
+  updateKsoScheduleRegion,
   createKsoScheduleStatus,
   getKsoScheduleMonth,
   getKsoScheduleTable,
