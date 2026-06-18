@@ -569,10 +569,6 @@ textarea:focus {
   box-shadow: inset 3px 0 0 var(--accent);
 }
 
-#ksoScheduleRequests [data-review-action] {
-  display: none;
-}
-
 .schedule-review {
   display: grid;
   gap: 10px;
