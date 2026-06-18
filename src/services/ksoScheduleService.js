@@ -431,11 +431,11 @@ async function archiveRejectedKsoScheduleRequest(data, req) {
 
   const archived = archiveKsoScheduleRequest(requestId);
   if (!archived) {
-    throw createValidationError('Можно скрыть только отклоненную заявку, которая еще не скрыта', 404);
+    throw createValidationError('Можно скрыть только завершенную заявку, которая еще не скрыта', 404);
   }
 
   return {
-    message: 'Отклоненная заявка скрыта.'
+    message: 'Завершенная заявка скрыта.'
   };
 }
 

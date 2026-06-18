@@ -1573,8 +1573,8 @@ function renderKsoScheduleRequests(requests) {
       <p>Смены: ${getRequestShiftTypeSummary(request)}</p>
       <p>Дней: ${request.workDays}, часов: ${request.totalHours}</p>
       ${isCurrentUserReviewer() ? '<p class="muted">Нажмите, чтобы открыть календарь заявки</p>' : ''}
-      ${isCurrentUserReviewer() && request.status === 'rejected' ? `
-        <button class="secondary-btn" type="button" data-archive-request>Скрыть отклоненную заявку</button>
+      ${isCurrentUserReviewer() && ['approved', 'rejected'].includes(request.status) ? `
+        <button class="secondary-btn" type="button" data-archive-request>Скрыть завершенную заявку</button>
       ` : ''}
     </section>
   `).join('')}`;

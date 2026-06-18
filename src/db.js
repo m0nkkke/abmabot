@@ -224,7 +224,7 @@ const archiveKsoScheduleRequestStmt = db.prepare(`
   SET archived_at = CURRENT_TIMESTAMP,
       updated_at = CURRENT_TIMESTAMP
   WHERE id = @id
-    AND status = 'rejected'
+    AND status IN ('approved', 'rejected')
     AND archived_at IS NULL
 `);
 const updateApprovedKsoScheduleRequestStmt = db.prepare(`
