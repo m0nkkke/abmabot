@@ -153,7 +153,10 @@
             <form class="simple-form" id="ksoScheduleForm">
                 <h2>График работы</h2>
                 <input type="hidden" name="requestId">
-                <label><span>Месяц</span><input name="month" type="month" required></label>
+                <div class="two-cols">
+                    <label><span>Месяц</span><input name="month" type="month" required></label>
+                    <label><span>Регион</span><select name="scheduleRegion" required></select></label>
+                </div>
                 <div class="segmented">
                     <button class="segment-btn" type="button" data-schedule-template="2-2">2/2 · 14 часов</button>
                     <button class="segment-btn" type="button" data-schedule-template="5-2">5/2 · 10 часов</button>

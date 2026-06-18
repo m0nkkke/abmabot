@@ -106,8 +106,19 @@ function numberValue(value, fallback = 0) {
     return fallback;
   }
 
-  const parsed = Number(String(value).replace(',', '.'));
-  return Number.isFinite(parsed) ? parsed : fallback;
+  const text = String(value).trim().replace(',', '.');
+  const parsed = Number(text);
+  if (Number.isFinite(parsed)) {
+    return parsed;
+  }
+
+  const leadingNumber = /^(\d+(?:\.\d+)?)/.exec(text);
+  if (leadingNumber) {
+    const parsedLeading = Number(leadingNumber[1]);
+    return Number.isFinite(parsedLeading) ? parsedLeading : fallback;
+  }
+
+  return fallback;
 }
 
 function parseInputDate(value, now = new Date()) {

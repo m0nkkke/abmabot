@@ -1318,12 +1318,11 @@ function getKsoScheduleSheetName(isoDate, shiftType = 'morning') {
   const year = String(isoDate || '').slice(0, 4);
   const month = Number(String(isoDate || '').slice(5, 7));
   const monthName = KSO_SCHEDULE_MONTH_NAMES[month - 1] || String(isoDate || '').slice(0, 7);
-  const shiftName = KSO_SCHEDULE_SHIFT_TYPES[normalizeKsoScheduleShiftType(shiftType)] || KSO_SCHEDULE_SHIFT_TYPES.morning;
-  return `${KSO_SCHEDULE_SHEET_NAME}-${shiftName}-${monthName}-${year}`;
+  return `${KSO_SCHEDULE_SHEET_NAME}-${monthName}-${year}`;
 }
 
 function getKsoScheduleSheetNames(isoDate) {
-  return Object.keys(KSO_SCHEDULE_SHIFT_TYPES).map((shiftType) => getKsoScheduleSheetName(isoDate, shiftType));
+  return [getKsoScheduleSheetName(isoDate)];
 }
 
 function shortKsoEmployeeName(fio) {
@@ -1499,7 +1498,7 @@ async function ensureKsoScheduleShiftSheet(sheets, isoDate, shiftType = 'morning
         employee.id,
         employee.fio,
         ...Array.from({ length: 31 }, () => ''),
-        `=SUM(C${rowNumber}:AG${rowNumber})`
+        buildKsoScheduleTotalFormula(rowNumber)
       ];
     });
 
@@ -1621,6 +1620,10 @@ async function getKsoScheduleSheetRows(isoDate, shiftType = '') {
   }
 
   const sheetNames = await ensureKsoScheduleSheets(sheets, isoDate);
+  if (sheetNames.length === 1) {
+    return readKsoScheduleSheetRows(sheets, sheetNames[0]);
+  }
+
   const scheduleSheetsRows = [];
   for (const sheetName of sheetNames) {
     scheduleSheetsRows.push(await readKsoScheduleSheetRows(sheets, sheetName));
@@ -1867,6 +1870,20 @@ function getKsoScheduleTotalColumn(headers) {
   return index >= 0 ? index : KSO_SCHEDULE_HEADERS.length - 1;
 }
 
+function formatKsoScheduleCell(item) {
+  const hours = Number(String(item?.hours || '').replace(',', '.'));
+  if (!Number.isFinite(hours) || hours <= 0) {
+    return '';
+  }
+
+  const shiftType = normalizeKsoScheduleShiftType(item.shiftType);
+  return `${hours} ${shiftType === 'lunch' ? 'обед' : 'утро'}`;
+}
+
+function buildKsoScheduleTotalFormula(rowNumber) {
+  return `=SUM(ARRAYFORMULA(IFERROR(VALUE(REGEXEXTRACT(C${rowNumber}:AG${rowNumber},"^([0-9]+(?:[.,][0-9]+)?)")),0)))`;
+}
+
 async function writeKsoScheduleStatus(profile, isoDate, status, historySheetName) {
   if (!profile?.fio) {
     throw new Error('Не заполнен профиль сотрудника');
@@ -1886,7 +1903,7 @@ async function writeKsoScheduleStatus(profile, isoDate, status, historySheetName
   const columnIndex = getKsoScheduleDateColumn(isoDate, headers);
   const columnName = columnNameByIndex(columnIndex + 1);
   const totalColumnName = columnNameByIndex(getKsoScheduleTotalColumn(headers) + 1);
-  const cellValue = normalizeKsoText(status) === normalizeKsoText('Р') ? 10 : '';
+  const cellValue = normalizeKsoText(status) === normalizeKsoText('Р') ? '10 утро' : '';
   await withTimeout(
     sheets.spreadsheets.values.batchUpdate({
       spreadsheetId: getKsoScheduleSheetId(),
@@ -1899,7 +1916,7 @@ async function writeKsoScheduleStatus(profile, isoDate, status, historySheetName
           },
           {
             range: `'${escapeSheetName(sheetName)}'!${totalColumnName}${rowNumber}:${totalColumnName}${rowNumber}`,
-            values: [[`=SUM(C${rowNumber}:AG${rowNumber})`]]
+            values: [[buildKsoScheduleTotalFormula(rowNumber)]]
           }
         ]
       }
@@ -1921,35 +1938,30 @@ async function writeKsoScheduleMonthHours(profile, isoDateHours, historySheetNam
 
   const sheets = getSheetsClient();
   const updates = [];
+  const sheetName = await ensureKsoScheduleShiftSheet(sheets, isoDateHours[0].isoDate, 'morning');
+  const scheduleRows = await readKsoScheduleSheetRows(sheets, sheetName);
+  const headers = scheduleRows[0] || [];
+  const row = findKsoScheduleRow(scheduleRows.slice(1), profile);
 
-  for (const shiftType of Object.keys(KSO_SCHEDULE_SHIFT_TYPES)) {
-    const sheetName = await ensureKsoScheduleShiftSheet(sheets, isoDateHours[0].isoDate, shiftType);
-    const scheduleRows = await readKsoScheduleSheetRows(sheets, sheetName);
-    const headers = scheduleRows[0] || [];
-    const row = findKsoScheduleRow(scheduleRows.slice(1), profile);
-
-    if (!row) {
-      throw new Error(`Сотрудник ${profile.fio} не найден на листе ${sheetName}`);
-    }
-
-    const rowNumber = scheduleRows.slice(1).indexOf(row) + 2;
-    isoDateHours.forEach((item) => {
-      const columnIndex = getKsoScheduleDateColumn(item.isoDate, headers);
-      const columnName = columnNameByIndex(columnIndex + 1);
-      const itemShiftType = item.shiftType ? normalizeKsoScheduleShiftType(item.shiftType) : '';
-      const shouldWrite = itemShiftType ? itemShiftType === shiftType : false;
-      updates.push({
-        range: `'${escapeSheetName(sheetName)}'!${columnName}${rowNumber}:${columnName}${rowNumber}`,
-        values: [[shouldWrite ? item.hours || '' : '']]
-      });
-    });
-
-    const totalColumnName = columnNameByIndex(getKsoScheduleTotalColumn(headers) + 1);
-    updates.push({
-      range: `'${escapeSheetName(sheetName)}'!${totalColumnName}${rowNumber}:${totalColumnName}${rowNumber}`,
-      values: [[`=SUM(C${rowNumber}:AG${rowNumber})`]]
-    });
+  if (!row) {
+    throw new Error(`Сотрудник ${profile.fio} не найден на листе ${sheetName}`);
   }
+
+  const rowNumber = scheduleRows.slice(1).indexOf(row) + 2;
+  isoDateHours.forEach((item) => {
+    const columnIndex = getKsoScheduleDateColumn(item.isoDate, headers);
+    const columnName = columnNameByIndex(columnIndex + 1);
+    updates.push({
+      range: `'${escapeSheetName(sheetName)}'!${columnName}${rowNumber}:${columnName}${rowNumber}`,
+      values: [[formatKsoScheduleCell(item)]]
+    });
+  });
+
+  const totalColumnName = columnNameByIndex(getKsoScheduleTotalColumn(headers) + 1);
+  updates.push({
+    range: `'${escapeSheetName(sheetName)}'!${totalColumnName}${rowNumber}:${totalColumnName}${rowNumber}`,
+    values: [[buildKsoScheduleTotalFormula(rowNumber)]]
+  });
 
   await withTimeout(
     sheets.spreadsheets.values.batchUpdate({
@@ -1974,7 +1986,7 @@ function buildKsoScheduleRows(employees) {
         employee.id,
         employee.fio,
         ...Array.from({ length: 31 }, () => ''),
-        `=SUM(C${rowNumber}:AG${rowNumber})`
+        buildKsoScheduleTotalFormula(rowNumber)
       ];
     })
   ];

@@ -15,6 +15,7 @@ const state = {
   ksoScheduleReviewDays: [],
   ksoScheduleReviewShiftType: 'morning',
   ksoScheduleRequestFilter: 'submitted',
+  ksoScheduleRegionFilter: 'all',
   ksoScheduleReadOnly: false,
   ksoScheduleSelectedDate: ''
 };
@@ -861,7 +862,7 @@ function renderKsoScheduleConfirm() {
     const renderWorkerGroup = (title, group) => `
       <strong>${title}</strong>
       ${group.length ? group.map((worker) => `
-        <span>${escapeHtml(worker.fio)} · ${worker.hours} ч.</span>
+        <span>${escapeHtml(worker.fio)} · ${worker.hours} ч.${worker.region ? ` · ${escapeHtml(worker.region)}` : ''}</span>
       `).join('') : '<span>Нет сотрудников</span>'}
     `;
     ksoScheduleConfirm.innerHTML = selectedDate ? `
@@ -1163,7 +1164,7 @@ function updateKsoScheduleEmployeeControls() {
   if (submitButton) {
     submitButton.disabled = disabled;
   }
-  ['shiftType', 'hours', 'applyHoursToAll', 'rangeStart', 'rangeEnd'].forEach((name) => {
+  ['scheduleRegion', 'shiftType', 'hours', 'applyHoursToAll', 'rangeStart', 'rangeEnd'].forEach((name) => {
     if (ksoScheduleForm[name]) {
       ksoScheduleForm[name].disabled = disabled;
     }
@@ -1244,6 +1245,18 @@ function getRequestShiftTypeSummary(request) {
   return shiftTypeText([...used][0] || 'morning');
 }
 
+function getScheduleRegionName() {
+  const select = ksoScheduleForm?.scheduleRegion;
+  return select?.selectedOptions?.[0]?.textContent?.trim() || '';
+}
+
+function getScheduleRequestRegions(requests) {
+  return [...new Set((requests || [])
+    .map((request) => String(request.region || '').trim())
+    .filter(Boolean))]
+    .sort((left, right) => left.localeCompare(right, 'ru'));
+}
+
 function requestTypeText(type) {
   return type === 'removal' ? 'Снятие смены' : 'График месяца';
 }
@@ -1274,7 +1287,12 @@ function getKsoScheduleDayWorkers(date) {
     .map((request) => {
       const entry = (request.entries || []).find((item) => getKsoRequestEntryDate(item) === date);
       const hours = normalizeHours(entry?.hours, 0);
-      return hours > 0 ? { fio: request.fio, hours, shiftType: normalizeShiftType(entry?.shiftType) } : null;
+      return hours > 0 ? {
+        fio: request.fio,
+        region: request.region || '',
+        hours,
+        shiftType: normalizeShiftType(entry?.shiftType)
+      } : null;
     })
     .filter(Boolean)
     .sort((left, right) => left.fio.localeCompare(right.fio, 'ru'));
@@ -1324,6 +1342,11 @@ function renderKsoScheduleReviewPanel() {
   }
 
   ksoScheduleReviewPanel.classList.remove('hidden');
+  const selectedCard = [...(ksoScheduleRequests?.querySelectorAll('[data-request-id]') || [])]
+    .find((card) => card.dataset.requestId === request.id);
+  if (selectedCard && ksoScheduleReviewPanel.parentElement !== selectedCard) {
+    selectedCard.append(ksoScheduleReviewPanel);
+  }
   const selected = state.ksoScheduleReviewDays.filter((day) => day.selected);
   const totalHours = selected.reduce((sum, day) => sum + normalizeHours(day.hours, 0), 0);
   const canEdit = request.requestType !== 'removal' && ['submitted', 'approved'].includes(request.status);
@@ -1500,11 +1523,13 @@ function renderKsoScheduleRequests(requests) {
   }
 
   const filter = isCurrentUserReviewer() ? state.ksoScheduleRequestFilter : 'all';
+  const regionFilter = isCurrentUserReviewer() ? state.ksoScheduleRegionFilter : 'all';
+  const regionOptions = getScheduleRequestRegions(requests);
   const filtered = (requests || []).filter((request) => {
     if (filter === 'all') {
-      return true;
+      return regionFilter === 'all' || String(request.region || '') === regionFilter;
     }
-    return request.status === filter;
+    return request.status === filter && (regionFilter === 'all' || String(request.region || '') === regionFilter);
   });
   const visible = filtered.slice(0, 24);
   const filterHtml = isCurrentUserReviewer() ? `
@@ -1513,6 +1538,12 @@ function renderKsoScheduleRequests(requests) {
       <button class="segment-btn${filter === 'approved' ? ' active' : ''}" type="button" data-schedule-filter="approved">Согласованные</button>
       <button class="segment-btn${filter === 'rejected' ? ' active' : ''}" type="button" data-schedule-filter="rejected">Отклоненные</button>
       <button class="segment-btn${filter === 'all' ? ' active' : ''}" type="button" data-schedule-filter="all">Все</button>
+    </div>
+    <div class="segmented">
+      <button class="segment-btn${regionFilter === 'all' ? ' active' : ''}" type="button" data-schedule-region-filter="all">Все регионы</button>
+      ${regionOptions.map((region) => `
+        <button class="segment-btn${regionFilter === region ? ' active' : ''}" type="button" data-schedule-region-filter="${escapeHtml(region)}">${escapeHtml(region)}</button>
+      `).join('')}
     </div>
   ` : '';
   if (!visible.length) {
@@ -1523,6 +1554,12 @@ function renderKsoScheduleRequests(requests) {
         renderKsoScheduleRequests(state.ksoScheduleRequests);
       });
     });
+    ksoScheduleRequests.querySelectorAll('[data-schedule-region-filter]').forEach((button) => {
+      button.addEventListener('click', () => {
+        state.ksoScheduleRegionFilter = button.dataset.scheduleRegionFilter;
+        renderKsoScheduleRequests(state.ksoScheduleRequests);
+      });
+    });
     renderKsoApprovedSchedulePanel();
     return;
   }
@@ -1530,6 +1567,7 @@ function renderKsoScheduleRequests(requests) {
   ksoScheduleRequests.innerHTML = `${filterHtml}${visible.map((request) => `
     <section class="decision-card${request.id === state.ksoScheduleReviewRequestId ? ' selected' : ''}" data-request-id="${request.id}">
       <h3>${escapeHtml(request.fio)} · ${escapeHtml(request.month)}</h3>
+      <p>Регион: ${escapeHtml(request.region || 'Не указан')}</p>
       <p>Тип: ${requestTypeText(request.requestType)}</p>
       <p>Статус: ${statusText(request.status)}</p>
       <p>Смены: ${getRequestShiftTypeSummary(request)}</p>
@@ -1547,10 +1585,16 @@ function renderKsoScheduleRequests(requests) {
       renderKsoScheduleRequests(state.ksoScheduleRequests);
     });
   });
+  ksoScheduleRequests.querySelectorAll('[data-schedule-region-filter]').forEach((button) => {
+    button.addEventListener('click', () => {
+      state.ksoScheduleRegionFilter = button.dataset.scheduleRegionFilter;
+      renderKsoScheduleRequests(state.ksoScheduleRequests);
+    });
+  });
 
   ksoScheduleRequests.querySelectorAll('[data-request-id]').forEach((card) => {
     card.addEventListener('click', (event) => {
-      if (event.target.closest('[data-archive-request]')) {
+      if (event.target.closest('[data-archive-request]') || event.target.closest('#ksoScheduleReviewPanel')) {
         return;
       }
 
@@ -1650,6 +1694,7 @@ async function saveKsoSchedule(statusMode = 'submitted') {
       requestId: ksoScheduleForm.requestId.value || '',
       month,
       status: statusMode,
+      region: getScheduleRegionName(),
       shiftType: normalizeShiftType(ksoScheduleForm.shiftType?.value),
       entries: state.ksoScheduleDays.map((day) => ({
         date: day.date,
@@ -1956,6 +2001,12 @@ async function init() {
   applyAdminOnlyVisibility();
 
   fillSelect(fixationForm.regionId, state.config.regions, (region) => region.id, (region) => region.name);
+  if (ksoScheduleForm?.scheduleRegion) {
+    fillSelect(ksoScheduleForm.scheduleRegion, state.config.regions, (region) => region.id, (region) => region.name);
+    if (state.config.user?.profile?.regionId) {
+      ksoScheduleForm.scheduleRegion.value = String(state.config.user.profile.regionId);
+    }
+  }
   updateShopSelect();
   applyProfileDefaults();
   applyLastSelectionDefaults();

@@ -11,6 +11,7 @@ const {
   reviewKsoScheduleRequest,
   revokeApprovedKsoScheduleRequest,
   saveKsoScheduleRequest,
+  updateEmployeeShop,
   updateApprovedKsoScheduleRequest
 } = require('../db');
 const { sendMessageToUser } = require('../maxClient');
@@ -303,6 +304,11 @@ async function notifyScheduleApplicant(request, action, wasEdited = false) {
 async function createKsoScheduleMonth(data, req) {
   const entries = normalizeScheduleEntries(data);
   const { userId, profile } = getMiniAppProfile(req, data);
+  const region = normalizeText(data.region);
+  if (userId && region) {
+    updateEmployeeShop(userId, region, profile.shop || '');
+    profile.region = region;
+  }
   const status = normalizeText(data.status) === 'submitted' ? 'submitted' : 'draft';
   const request = saveKsoScheduleRequest({
     id: normalizeText(data.requestId) || null,
@@ -353,8 +359,10 @@ function serializeRequest(request) {
     return null;
   }
 
+  const profile = request.userId ? getProfile(request.userId) : null;
   return {
     ...request,
+    region: profile?.region || '',
     totalHours: request.entries.reduce((sum, entry) => sum + normalizeNumber(entry.hours), 0),
     workDays: request.entries.filter((entry) => normalizeNumber(entry.hours) > 0).length
   };
