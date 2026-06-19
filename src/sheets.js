@@ -54,6 +54,7 @@ const TECH_REPORT_DATA_RANGE = `A:${TECH_REPORT_HEADER_END_COLUMN}`;
 const TECH_REPORT_HEADER_RANGE = `A1:${TECH_REPORT_HEADER_END_COLUMN}1`;
 const GOOGLE_REQUEST_TIMEOUT_MS = Number(process.env.GOOGLE_REQUEST_TIMEOUT_MS || 20000);
 const GOOGLE_REQUEST_RETRIES = Number(process.env.GOOGLE_REQUEST_RETRIES || 3);
+const GOOGLE_USE_SELF_SIGNED_JWT = (process.env.GOOGLE_USE_SELF_SIGNED_JWT || 'true').toLowerCase() !== 'false';
 const MIN_EXTRA_ROWS = 1000;
 const MIN_EXTRA_COLUMNS = 5;
 
@@ -64,7 +65,9 @@ function getGoogleAuth() {
   if (!googleAuth) {
     googleAuth = new google.auth.GoogleAuth({
       keyFile: CREDENTIALS_PATH,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets']
+      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
+      useJWTAccessWithScope: GOOGLE_USE_SELF_SIGNED_JWT,
+      defaultServicePath: 'sheets.googleapis.com'
     });
   }
 
@@ -191,12 +194,23 @@ async function getReadySheetsClient() {
         getGoogleAuth().getClient(),
         'РїРѕР»СѓС‡РµРЅРёРµ OAuth-РєР»РёРµРЅС‚Р°'
       );
+
+      if (GOOGLE_USE_SELF_SIGNED_JWT && typeof authClient.getRequestHeaders === 'function') {
+        await withTimeout(
+          authClient.getRequestHeaders('https://sheets.googleapis.com/'),
+          'РїРѕРґРіРѕС‚РѕРІРєР° self-signed JWT'
+        );
+        return;
+      }
+
       await withTimeout(
         authClient.getAccessToken(),
         'РїРѕР»СѓС‡РµРЅРёРµ access token'
       );
     },
-    'РїРѕР»СѓС‡РµРЅРёРµ access token Google'
+    GOOGLE_USE_SELF_SIGNED_JWT
+      ? 'РїРѕРґРіРѕС‚РѕРІРєР° Google JWT'
+      : 'РїРѕР»СѓС‡РµРЅРёРµ access token Google'
   );
 
   return getSheetsClient();
