@@ -53,6 +53,7 @@ const TECH_REPORT_HEADER_END_COLUMN = columnNameByIndex(TECH_REPORT_HEADERS.leng
 const TECH_REPORT_DATA_RANGE = `A:${TECH_REPORT_HEADER_END_COLUMN}`;
 const TECH_REPORT_HEADER_RANGE = `A1:${TECH_REPORT_HEADER_END_COLUMN}1`;
 const GOOGLE_REQUEST_TIMEOUT_MS = Number(process.env.GOOGLE_REQUEST_TIMEOUT_MS || 20000);
+const GOOGLE_REQUEST_RETRIES = Number(process.env.GOOGLE_REQUEST_RETRIES || 3);
 const MIN_EXTRA_ROWS = 1000;
 const MIN_EXTRA_COLUMNS = 5;
 
@@ -98,6 +99,52 @@ function withTimeout(promise, stepName) {
   return Promise.race([promise, timeoutPromise]).finally(() => {
     clearTimeout(timeoutId);
   });
+}
+
+function isTransientGoogleError(error) {
+  const code = String(error?.code || error?.error?.code || '');
+  const message = String(error?.message || error?.error?.message || '');
+  const status = Number(error?.response?.status || 0);
+
+  return [
+    'ERR_STREAM_PREMATURE_CLOSE',
+    'ECONNRESET',
+    'ETIMEDOUT',
+    'EAI_AGAIN',
+    'GOOGLE_SHEETS_TIMEOUT'
+  ].includes(code)
+    || /premature close|socket hang up|network|timeout/i.test(message)
+    || [429, 500, 502, 503, 504].includes(status);
+}
+
+function wait(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withGoogleRetry(action, stepName, retries = GOOGLE_REQUEST_RETRIES) {
+  let lastError;
+  const attempts = Math.max(1, retries);
+
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await action();
+    } catch (error) {
+      lastError = error;
+      if (!isTransientGoogleError(error) || attempt >= attempts) {
+        throw error;
+      }
+
+      const delayMs = Math.min(5000, 500 * (2 ** (attempt - 1)));
+      console.warn(`[${new Date().toISOString()}] Временная ошибка Google Sheets на шаге "${stepName}". Повтор ${attempt + 1}/${attempts} через ${delayMs}ms.`, {
+        message: error?.message,
+        code: error?.code || error?.error?.code,
+        status: error?.response?.status
+      });
+      await wait(delayMs);
+    }
+  }
+
+  throw lastError;
 }
 
 function escapeSheetName(name) {
@@ -1368,13 +1415,16 @@ function getKsoHistoryHeaders(isoDate) {
 }
 
 async function getSpreadsheetSheetNames(sheets, spreadsheetId = SHEET_ID) {
-  const spreadsheet = await withTimeout(
-    sheets.spreadsheets.get({
-      spreadsheetId,
-      fields: 'sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))'
-    }, {
-      timeout: GOOGLE_REQUEST_TIMEOUT_MS
-    }),
+  const spreadsheet = await withGoogleRetry(
+    () => withTimeout(
+      sheets.spreadsheets.get({
+        spreadsheetId,
+        fields: 'sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))'
+      }, {
+        timeout: GOOGLE_REQUEST_TIMEOUT_MS
+      }),
+      'получение списка листов для КСО'
+    ),
     'получение списка листов для КСО'
   );
 
