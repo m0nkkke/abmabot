@@ -1,4 +1,5 @@
 const { google } = require('googleapis');
+const fs = require('fs');
 const { MAX_PHOTOS_PER_RECORD } = require('./constants');
 const { getProfile, listEmployees } = require('./db');
 
@@ -63,11 +64,23 @@ let sheetsClient;
 
 function getGoogleAuth() {
   if (!googleAuth) {
+    if (GOOGLE_USE_SELF_SIGNED_JWT) {
+      const credentials = JSON.parse(fs.readFileSync(CREDENTIALS_PATH, 'utf8'));
+      const jwtClient = new google.auth.JWT({
+        email: credentials.client_email,
+        key: credentials.private_key,
+        keyId: credentials.private_key_id,
+        scopes: ['https://www.googleapis.com/auth/spreadsheets']
+      });
+      jwtClient.useJWTAccessWithScope = true;
+      jwtClient.defaultServicePath = 'sheets.googleapis.com';
+      googleAuth = jwtClient;
+      return googleAuth;
+    }
+
     googleAuth = new google.auth.GoogleAuth({
       keyFile: CREDENTIALS_PATH,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets'],
-      useJWTAccessWithScope: GOOGLE_USE_SELF_SIGNED_JWT,
-      defaultServicePath: 'sheets.googleapis.com'
+      scopes: ['https://www.googleapis.com/auth/spreadsheets']
     });
   }
 
@@ -190,27 +203,29 @@ function getSheetsClient() {
 async function getReadySheetsClient() {
   await withGoogleRetry(
     async () => {
-      const authClient = await withTimeout(
-        getGoogleAuth().getClient(),
-        'РїРѕР»СѓС‡РµРЅРёРµ OAuth-РєР»РёРµРЅС‚Р°'
-      );
+      const auth = getGoogleAuth();
 
-      if (GOOGLE_USE_SELF_SIGNED_JWT && typeof authClient.getRequestHeaders === 'function') {
+      if (GOOGLE_USE_SELF_SIGNED_JWT && typeof auth.getRequestHeaders === 'function') {
         await withTimeout(
-          authClient.getRequestHeaders('https://sheets.googleapis.com/'),
-          'РїРѕРґРіРѕС‚РѕРІРєР° self-signed JWT'
+          auth.getRequestHeaders('https://sheets.googleapis.com/'),
+          'prepare self-signed JWT'
         );
         return;
       }
 
+      const authClient = await withTimeout(
+        auth.getClient(),
+        'get OAuth client'
+      );
+
       await withTimeout(
         authClient.getAccessToken(),
-        'РїРѕР»СѓС‡РµРЅРёРµ access token'
+        'get access token'
       );
     },
     GOOGLE_USE_SELF_SIGNED_JWT
-      ? 'РїРѕРґРіРѕС‚РѕРІРєР° Google JWT'
-      : 'РїРѕР»СѓС‡РµРЅРёРµ access token Google'
+      ? 'prepare Google JWT'
+      : 'get Google access token'
   );
 
   return getSheetsClient();
