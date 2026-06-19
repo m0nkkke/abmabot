@@ -17,7 +17,7 @@
     "better-sqlite3": "^12.10.0",
     "dotenv": "^16.0.0",
     "express": "^4.18.0",
-    "googleapis": "^140.0.0",
+    "googleapis": "^173.0.0",
     "sharp": "^0.33.5"
   }
 }
