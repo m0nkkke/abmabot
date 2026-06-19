@@ -57,7 +57,19 @@ const GOOGLE_REQUEST_RETRIES = Number(process.env.GOOGLE_REQUEST_RETRIES || 3);
 const MIN_EXTRA_ROWS = 1000;
 const MIN_EXTRA_COLUMNS = 5;
 
+let googleAuth;
 let sheetsClient;
+
+function getGoogleAuth() {
+  if (!googleAuth) {
+    googleAuth = new google.auth.GoogleAuth({
+      keyFile: CREDENTIALS_PATH,
+      scopes: ['https://www.googleapis.com/auth/spreadsheets']
+    });
+  }
+
+  return googleAuth;
+}
 
 function logError(message, error) {
   if (error && error.response) {
@@ -166,15 +178,28 @@ function columnNameByIndex(index) {
 
 function getSheetsClient() {
   if (!sheetsClient) {
-    const auth = new google.auth.GoogleAuth({
-      keyFile: CREDENTIALS_PATH,
-      scopes: ['https://www.googleapis.com/auth/spreadsheets']
-    });
-
-    sheetsClient = google.sheets({ version: 'v4', auth });
+    sheetsClient = google.sheets({ version: 'v4', auth: getGoogleAuth() });
   }
 
   return sheetsClient;
+}
+
+async function getReadySheetsClient() {
+  await withGoogleRetry(
+    async () => {
+      const authClient = await withTimeout(
+        getGoogleAuth().getClient(),
+        'РїРѕР»СѓС‡РµРЅРёРµ OAuth-РєР»РёРµРЅС‚Р°'
+      );
+      await withTimeout(
+        authClient.getAccessToken(),
+        'РїРѕР»СѓС‡РµРЅРёРµ access token'
+      );
+    },
+    'РїРѕР»СѓС‡РµРЅРёРµ access token Google'
+  );
+
+  return getSheetsClient();
 }
 
 function getReportsSheetId() {
@@ -1141,7 +1166,7 @@ async function appendRow(shop, row) {
     }
 
     log('Google Sheets: начинаем запись строки.', { shop });
-    const sheets = getSheetsClient();
+    const sheets = await getReadySheetsClient();
     await ensureShopSheet(sheets, shop);
     await ensureShopSheet(sheets, DATA_SHEET_NAME);
 
@@ -1162,7 +1187,7 @@ async function appendOnlineTheftRow(row) {
     }
 
     log('Google Sheets: начинаем запись онлайн-кражи.', { sheet: ONLINE_THEFT_SHEET_NAME });
-    const sheets = getSheetsClient();
+    const sheets = await getReadySheetsClient();
     await ensureOnlineTheftSheet(sheets);
     await writeOnlineTheftRowToNextFreeLine(sheets, row);
     log('Google Sheets: онлайн-кража успешно записана.', { sheet: ONLINE_THEFT_SHEET_NAME });
@@ -1192,7 +1217,7 @@ async function replaceFixationRows(previousShop, nextShop, fixationId, rows) {
       throw new Error('Не задана переменная окружения GOOGLE_SHEET_ID');
     }
 
-    const sheets = getSheetsClient();
+    const sheets = await getReadySheetsClient();
     await ensureShopSheet(sheets, DATA_SHEET_NAME);
     await ensureShopSheet(sheets, previousShop);
     await ensureShopSheet(sheets, nextShop);
@@ -1225,7 +1250,7 @@ async function replaceFixationRows(previousShop, nextShop, fixationId, rows) {
 async function appendTextReportRow(row) {
   try {
     log('Google Sheets: начинаем запись текстового отчета.', { sheet: REPORTS_SHEET_NAME });
-    const sheets = getSheetsClient();
+    const sheets = await getReadySheetsClient();
     await ensureTextReportSheet(sheets);
     await writeTextReportToNextFreeLine(sheets, row);
     log('Google Sheets: текстовый отчет успешно записан.', { sheet: REPORTS_SHEET_NAME });
@@ -1238,7 +1263,7 @@ async function appendTextReportRow(row) {
 async function appendAnonymousFeedbackRow(row) {
   try {
     log('Google Sheets: начинаем запись анонимного обращения.', { sheet: ANONYMOUS_FEEDBACK_SHEET_NAME });
-    const sheets = getSheetsClient();
+    const sheets = await getReadySheetsClient();
     await ensureTextReportSheet(sheets, ANONYMOUS_FEEDBACK_SHEET_NAME);
     await writeTextReportToNextFreeLine(sheets, row, ANONYMOUS_FEEDBACK_SHEET_NAME);
     log('Google Sheets: анонимное обращение успешно записано.', { sheet: ANONYMOUS_FEEDBACK_SHEET_NAME });
@@ -1251,7 +1276,7 @@ async function appendAnonymousFeedbackRow(row) {
 async function appendKsoReportRow(row) {
   try {
     log('Google Sheets: начинаем запись отписки КСО.', { sheet: KSO_SHEET_NAME });
-    const sheets = getSheetsClient();
+    const sheets = await getReadySheetsClient();
     await ensureKsoReportSheet(sheets);
     await writeKsoReportToNextFreeLine(sheets, row);
     log('Google Sheets: отписка КСО успешно записана.', { sheet: KSO_SHEET_NAME });
@@ -1264,7 +1289,7 @@ async function appendKsoReportRow(row) {
 async function appendTechReportRow(row) {
   try {
     log('Google Sheets: начинаем запись технической неполадки.', { sheet: TECH_REPORTS_SHEET_NAME });
-    const sheets = getSheetsClient();
+    const sheets = await getReadySheetsClient();
     await ensureTechReportSheet(sheets);
     await writeTechReportToNextFreeLine(sheets, row);
     log('Google Sheets: техническая неполадка успешно записана.', { sheet: TECH_REPORTS_SHEET_NAME });
@@ -1279,7 +1304,7 @@ async function getBonusSheetRows() {
     throw new Error('Не задана переменная окружения GOOGLE_BONUS_SHEET_ID или GOOGLE_SHEET_ID');
   }
 
-  const sheets = getSheetsClient();
+  const sheets = await getReadySheetsClient();
   const response = await withTimeout(
     sheets.spreadsheets.values.get({
       spreadsheetId: BONUS_SHEET_ID,
@@ -1614,7 +1639,7 @@ async function getKsoAssignmentSheetData(isoDate, historySheetName) {
     throw new Error('Не задана переменная окружения GOOGLE_KSO_ASSIGNMENT_SHEET_ID');
   }
 
-  const sheets = getSheetsClient();
+  const sheets = await getReadySheetsClient();
   await ensureKsoAssignmentSheets(sheets, isoDate, historySheetName);
 
   const ranges = [
@@ -1655,7 +1680,7 @@ async function getKsoAssignmentSheetData(isoDate, historySheetName) {
 }
 
 async function getKsoScheduleSheetRows(isoDate, shiftType = '') {
-  const sheets = getSheetsClient();
+  const sheets = await getReadySheetsClient();
   if (shiftType) {
     const sheetName = await ensureKsoScheduleShiftSheet(sheets, isoDate, shiftType);
     return readKsoScheduleSheetRows(sheets, sheetName);
@@ -1809,7 +1834,7 @@ function buildKsoAnalyticsRows(result) {
 }
 
 async function writeKsoAssignmentResult(isoDate, result, data) {
-  const sheets = getSheetsClient();
+  const sheets = await getReadySheetsClient();
   const dailyValues = [
     [`Дата`, formatKsoDateHeader(isoDate), '', '', '', '', ''],
     [`Всего сотрудников`, result.available.length, '', '', '', '', ''],
@@ -1848,7 +1873,7 @@ async function writeKsoManualAssignment(isoDate, employee, shop, data) {
   const category = normalizeKsoText(shop.category).includes('гипер')
     ? 'hyper'
     : normalizeKsoText(shop.category).includes('сред') ? 'medium' : 'small';
-  const sheets = getSheetsClient();
+  const sheets = await getReadySheetsClient();
   const dailyRow = [
     employee.fio,
     employee.level,
@@ -1931,7 +1956,7 @@ async function writeKsoScheduleStatus(profile, isoDate, status, historySheetName
     throw new Error('Не заполнен профиль сотрудника');
   }
 
-  const sheets = getSheetsClient();
+  const sheets = await getReadySheetsClient();
   const sheetName = await ensureKsoScheduleShiftSheet(sheets, isoDate, 'morning');
   const scheduleRows = await readKsoScheduleSheetRows(sheets, sheetName);
   const headers = scheduleRows[0] || [];
@@ -1978,7 +2003,7 @@ async function writeKsoScheduleMonthHours(profile, isoDateHours, historySheetNam
     throw new Error('Не переданы дни графика');
   }
 
-  const sheets = getSheetsClient();
+  const sheets = await getReadySheetsClient();
   const updates = [];
   const sheetName = await ensureKsoScheduleShiftSheet(sheets, isoDateHours[0].isoDate, 'morning');
   const scheduleRows = await readKsoScheduleSheetRows(sheets, sheetName);
@@ -2146,7 +2171,7 @@ async function initializeKsoAssignmentSheet(isoDate, employees, shops, historySh
     throw new Error('Не задана переменная окружения GOOGLE_KSO_ASSIGNMENT_SHEET_ID');
   }
 
-  const sheets = getSheetsClient();
+  const sheets = await getReadySheetsClient();
   await ensureKsoAssignmentSheets(sheets, isoDate, historySheetName);
   const scheduleSheetNames = await ensureKsoScheduleSheets(sheets, isoDate);
 
