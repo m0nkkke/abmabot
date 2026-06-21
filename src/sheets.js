@@ -1400,6 +1400,17 @@ function getKsoScheduleSheetNames(isoDate) {
   return [getKsoScheduleSheetName(isoDate)];
 }
 
+function getKsoScheduleHeaders(isoDate) {
+  const year = Number(String(isoDate || '').slice(0, 4));
+  const month = Number(String(isoDate || '').slice(5, 7));
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const dayHeaders = Array.from({ length: 31 }, (_, index) => (
+    index < lastDay ? String(index + 1) : ''
+  ));
+
+  return ['№', 'ФИО', ...dayHeaders, 'Итого'];
+}
+
 async function withKsoScheduleRosterLock(key, action) {
   const previous = ksoScheduleRosterLocks.get(key) || Promise.resolve();
   let release;
@@ -1479,12 +1490,12 @@ async function getSpreadsheetSheetNames(sheets, spreadsheetId = SHEET_ID) {
   return spreadsheet.data.sheets.map((sheet) => sheet.properties);
 }
 
-async function getKsoScheduleSheetRowGroups(sheets, spreadsheetId, sheetId) {
+async function getKsoScheduleSheetMetadata(sheets, spreadsheetId, sheetId) {
   const spreadsheet = await withGoogleRetry(
     () => withTimeout(
       sheets.spreadsheets.get({
         spreadsheetId,
-        fields: 'sheets(properties(sheetId),rowGroups(range,depth,collapsed))'
+        fields: 'sheets(properties(sheetId),rowGroups,conditionalFormats)'
       }, {
         timeout: GOOGLE_REQUEST_TIMEOUT_MS
       }),
@@ -1495,7 +1506,10 @@ async function getKsoScheduleSheetRowGroups(sheets, spreadsheetId, sheetId) {
   const sheet = (spreadsheet.data.sheets || [])
     .find((item) => item.properties?.sheetId === sheetId);
 
-  return sheet?.rowGroups || [];
+  return {
+    rowGroups: sheet?.rowGroups || [],
+    conditionalFormats: sheet?.conditionalFormats || []
+  };
 }
 
 async function ensureKsoSheetExists(sheets, spreadsheetId, sheetName, headers = null, minRows = 100, minColumns = 20) {
@@ -1656,9 +1670,54 @@ function ksoScheduleRosterKey(rows) {
     .join('|');
 }
 
-async function syncKsoScheduleRegionGroups(sheets, spreadsheetId, sheetId, values) {
+function getKsoScheduleWeekendRanges(isoDate, sheetId, rowCount) {
+  const year = Number(String(isoDate || '').slice(0, 4));
+  const month = Number(String(isoDate || '').slice(5, 7));
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  const ranges = [];
+
+  for (let day = 1; day <= lastDay; day += 1) {
+    const weekday = new Date(Date.UTC(year, month - 1, day)).getUTCDay();
+    if (weekday !== 0 && weekday !== 6) {
+      continue;
+    }
+
+    const columnIndex = day + 1;
+    ranges.push({
+      sheetId,
+      startRowIndex: 0,
+      endRowIndex: rowCount,
+      startColumnIndex: columnIndex,
+      endColumnIndex: columnIndex + 1
+    });
+  }
+
+  return ranges;
+}
+
+function ksoGridRangeKey(range) {
+  return [
+    range?.sheetId,
+    range?.startRowIndex,
+    range?.endRowIndex,
+    range?.startColumnIndex,
+    range?.endColumnIndex
+  ].join(':');
+}
+
+function hasKsoWeekendConditionalFormat(conditionalFormats, desiredRanges) {
+  const desiredKeys = desiredRanges.map(ksoGridRangeKey).sort();
+  return (conditionalFormats || []).some((rule) => {
+    const formula = rule.booleanRule?.condition?.values?.[0]?.userEnteredValue;
+    const actualKeys = (rule.ranges || []).map(ksoGridRangeKey).sort();
+    return formula === '=TRUE' && JSON.stringify(actualKeys) === JSON.stringify(desiredKeys);
+  });
+}
+
+async function syncKsoScheduleRegionGroups(sheets, spreadsheetId, sheetId, values, isoDate, rowCount) {
   const desiredGroups = getKsoScheduleRegionGroups(values, sheetId);
-  const existingGroups = await getKsoScheduleSheetRowGroups(sheets, spreadsheetId, sheetId);
+  const metadata = await getKsoScheduleSheetMetadata(sheets, spreadsheetId, sheetId);
+  const existingGroups = metadata.rowGroups;
   const desiredKeys = desiredGroups.map((group) => ksoDimensionRangeKey(group.range)).sort();
   const existingKeys = existingGroups.map((group) => ksoDimensionRangeKey(group.range)).sort();
   const groupsMatch = JSON.stringify(desiredKeys) === JSON.stringify(existingKeys);
@@ -1696,6 +1755,64 @@ async function syncKsoScheduleRegionGroups(sheets, spreadsheetId, sheetId, value
     });
   }
 
+  const weekendRanges = getKsoScheduleWeekendRanges(isoDate, sheetId, rowCount);
+  if (weekendRanges.length && !hasKsoWeekendConditionalFormat(metadata.conditionalFormats, weekendRanges)) {
+    requests.push({
+      addConditionalFormatRule: {
+        index: 0,
+        rule: {
+          ranges: weekendRanges,
+          booleanRule: {
+            condition: {
+              type: 'CUSTOM_FORMULA',
+              values: [{ userEnteredValue: '=TRUE' }]
+            },
+            format: {
+              backgroundColor: { red: 0.96, green: 0.91, blue: 0.91 }
+            }
+          }
+        }
+      }
+    });
+    requests.push({
+      repeatCell: {
+        range: {
+          sheetId,
+          startRowIndex: 0,
+          endRowIndex: 1,
+          startColumnIndex: 0,
+          endColumnIndex: KSO_SCHEDULE_HEADERS.length
+        },
+        cell: {
+          userEnteredFormat: {
+            backgroundColor: { red: 0.88, green: 0.9, blue: 0.92 },
+            horizontalAlignment: 'CENTER',
+            verticalAlignment: 'MIDDLE',
+            textFormat: { bold: true }
+          }
+        },
+        fields: [
+          'userEnteredFormat.backgroundColor',
+          'userEnteredFormat.horizontalAlignment',
+          'userEnteredFormat.verticalAlignment',
+          'userEnteredFormat.textFormat.bold'
+        ].join(',')
+      }
+    });
+    requests.push({
+      updateSheetProperties: {
+        properties: {
+          sheetId,
+          gridProperties: {
+            frozenRowCount: 1,
+            frozenColumnCount: 2
+          }
+        },
+        fields: 'gridProperties.frozenRowCount,gridProperties.frozenColumnCount'
+      }
+    });
+  }
+
   if (!requests.length) {
     return;
   }
@@ -1728,17 +1845,18 @@ async function ensureKsoScheduleShiftSheet(sheets, isoDate, shiftType = 'morning
 
 async function ensureKsoScheduleShiftSheetUnlocked(sheets, isoDate, shiftType, sheetName) {
   const spreadsheetId = getKsoScheduleSheetId();
+  const scheduleHeaders = getKsoScheduleHeaders(isoDate);
   const sheetProperties = await ensureKsoSheetExists(
     sheets,
     spreadsheetId,
     sheetName,
-    KSO_SCHEDULE_HEADERS,
+    scheduleHeaders,
     100,
-    KSO_SCHEDULE_HEADERS.length
+    scheduleHeaders.length
   );
 
   const rows = await readKsoScheduleSheetRows(sheets, sheetName);
-  const values = buildKsoScheduleRows(getActiveKsoScheduleEmployees(), rows);
+  const values = buildKsoScheduleRows(getActiveKsoScheduleEmployees(), rows, scheduleHeaders);
   const rosterChanged = ksoScheduleRosterKey(rows) !== ksoScheduleRosterKey(values);
   if (rosterChanged) {
     await withTimeout(
@@ -1765,7 +1883,14 @@ async function ensureKsoScheduleShiftSheetUnlocked(sheets, isoDate, shiftType, s
     );
   }
   if (sheetProperties?.sheetId !== undefined) {
-    await syncKsoScheduleRegionGroups(sheets, spreadsheetId, sheetProperties.sheetId, values);
+    await syncKsoScheduleRegionGroups(
+      sheets,
+      spreadsheetId,
+      sheetProperties.sheetId,
+      values,
+      isoDate,
+      sheetProperties.gridProperties?.rowCount || Math.max(100, values.length)
+    );
   }
 
   return sheetName;
@@ -2231,7 +2356,7 @@ async function writeKsoScheduleMonthHours(profile, isoDateHours, historySheetNam
   );
 }
 
-function buildKsoScheduleRows(employees, existingRows = []) {
+function buildKsoScheduleRows(employees, existingRows = [], scheduleHeaders = KSO_SCHEDULE_HEADERS) {
   const existingEmployeeRows = (existingRows || [])
     .slice(1)
     .filter((row) => String(row[0] || '').trim() && String(row[1] || '').trim());
@@ -2251,7 +2376,7 @@ function buildKsoScheduleRows(employees, existingRows = []) {
     grouped.get(region).push(employee);
   });
 
-  const rows = [KSO_SCHEDULE_HEADERS];
+  const rows = [scheduleHeaders];
   [...grouped.entries()]
     .sort(([left], [right]) => left.localeCompare(right, 'ru'))
     .forEach(([region, regionEmployees]) => {
@@ -2269,7 +2394,9 @@ function buildKsoScheduleRows(employees, existingRows = []) {
           const existing = existingById.get(String(employee.id))
             || existingByFio.get(normalizeKsoFio(employee.fio))
             || [];
-          const dayValues = Array.from({ length: 31 }, (_, index) => existing[index + 2] || '');
+          const dayValues = Array.from({ length: 31 }, (_, index) => (
+            scheduleHeaders[index + 2] ? existing[index + 2] || '' : ''
+          ));
           rows.push([
             employee.id,
             employee.fio,
@@ -2368,7 +2495,7 @@ async function initializeKsoAssignmentSheet(isoDate, employees, shops, historySh
   const scheduleSheetNames = await ensureKsoScheduleSheets(sheets, isoDate);
 
   const employeeRows = buildKsoEmployeeRows(employees);
-  const scheduleRows = buildKsoScheduleRows(employees);
+  const scheduleRows = buildKsoScheduleRows(employees, [], getKsoScheduleHeaders(isoDate));
   const shopRows = buildKsoShopRows(shops);
   const storeComplexityRows = buildKsoStoreComplexityRows(shops);
   const analyticsRows = buildKsoAnalyticsInitRows(employees);
