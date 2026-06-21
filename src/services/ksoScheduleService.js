@@ -436,7 +436,7 @@ async function approveKsoScheduleRequest(data, req) {
   }
 
   if (action === 'approved') {
-    await updateScheduleMonth(reviewerId, { fio: reviewed.fio }, reviewed.entries);
+    await updateScheduleMonth(reviewerId, { fio: reviewed.fio, userId: reviewed.userId }, reviewed.entries);
   }
   await notifyScheduleApplicant(reviewed, action, editedEntries ? scheduleWasEdited(existingRequest?.entries, reviewed.entries) : false);
 
@@ -485,7 +485,7 @@ async function updateApprovedKsoScheduleMonth(data, req) {
     throw createValidationError('Согласованный график не найден или уже недоступен', 404);
   }
 
-  await updateScheduleMonth(reviewerId, { fio: updated.fio }, updated.entries);
+  await updateScheduleMonth(reviewerId, { fio: updated.fio, userId: updated.userId }, updated.entries);
   await notifyScheduleApplicant(updated, 'approved', scheduleWasEdited(existing.entries, updated.entries));
 
   return {
@@ -516,7 +516,7 @@ async function revokeApprovedKsoScheduleMonth(data, req) {
     throw createValidationError('Согласованный график не найден или уже недоступен', 404);
   }
 
-  await updateScheduleMonth(reviewerId, { fio: existing.fio }, clearedEntries);
+  await updateScheduleMonth(reviewerId, { fio: existing.fio, userId: existing.userId }, clearedEntries);
   await notifyScheduleApplicant(revoked, 'revoked', false);
 
   return {
