@@ -326,8 +326,8 @@ async function createKsoScheduleMonth(data, req) {
   return {
     request,
     message: status === 'submitted'
-      ? 'График отправлен на согласование.'
-      : 'Черновик графика сохранен.',
+      ? 'График обработан: отправлен на согласование.'
+      : 'График обработан: черновик сохранен.',
     totalHours: entries.reduce((sum, entry) => sum + normalizeNumber(entry.hours), 0)
   };
 }
@@ -442,7 +442,9 @@ async function approveKsoScheduleRequest(data, req) {
 
   return {
     request: serializeRequest(reviewed),
-    message: action === 'approved' ? 'График одобрен и записан в таблицу.' : 'Заявка отклонена.'
+    message: action === 'approved'
+      ? 'График обработан: согласован и сохранен в таблицу.'
+      : 'График обработан: заявка отклонена.'
   };
 }
 
@@ -490,7 +492,7 @@ async function updateApprovedKsoScheduleMonth(data, req) {
 
   return {
     request: serializeRequest(updated),
-    message: 'Согласованный график обновлен, сотрудник уведомлен.'
+    message: 'График обработан: изменения сохранены, сотрудник уведомлен.'
   };
 }
 
@@ -521,7 +523,7 @@ async function revokeApprovedKsoScheduleMonth(data, req) {
 
   return {
     request: serializeRequest(revoked),
-    message: 'Согласованный график отозван, сотрудник может заполнить его заново.'
+    message: 'График обработан: согласованный график отозван, сотрудник может заполнить его заново.'
   };
 }
 

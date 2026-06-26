@@ -61,8 +61,8 @@ async function handleKsoReportCallback(update, chatId, userId, session, payload,
       await sendKeyboardMessage(
         chatId,
         userId,
-        '✅ Отчет КСО сохранен.',
-        repeatOrMenuAttachments('new_kso_report', '+ Новый отчет КСО')
+        '✅ Отписка обработана: сохранена.',
+        repeatOrMenuAttachments('new_kso_report', '+ Новая отписка КСО')
       );
     } catch (error) {
       logError('Не удалось сохранить отписку КСО в Google Sheets:', error);

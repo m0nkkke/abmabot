@@ -67,7 +67,7 @@ async function handleTextReportCallback(update, chatId, userId, session, payload
       await sendKeyboardMessage(
         chatId,
         userId,
-        '✅ Отчет сохранен.',
+        '✅ Отчет обработан: сохранен.',
         repeatOrMenuAttachments('new_text_report', '+ Новый отчет')
       );
     } catch (error) {

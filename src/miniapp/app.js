@@ -794,6 +794,22 @@ async function submitJson(url, payload) {
   });
 }
 
+function simpleReportSuccessText(endpoint) {
+  if (String(endpoint || '').includes('anonymous-feedback')) {
+    return 'Обращение обработано: сохранено.';
+  }
+
+  if (String(endpoint || '').includes('/kso')) {
+    return 'Отписка обработана: сохранена.';
+  }
+
+  if (String(endpoint || '').includes('/tech')) {
+    return 'Отчет обработан: сохранен.';
+  }
+
+  return 'Отчет обработан: сохранен.';
+}
+
 async function handleFixationSubmit(event) {
   event.preventDefault();
   setStatus(fixationStatus, 'Сохраняю...', '');
@@ -841,7 +857,7 @@ async function handleSimpleReportSubmit(event) {
     form.reset();
     applyFioDefaults(form);
     form.date.value = todayInputDate();
-    setStatus(status, 'Сохранено.', 'success');
+    setStatus(status, simpleReportSuccessText(form.dataset.reportEndpoint), 'success');
   } catch (error) {
     setStatus(status, error.message, 'error');
   } finally {
@@ -1248,6 +1264,36 @@ function getRequestShiftTypeSummary(request) {
   return shiftTypeText([...used][0] || 'morning');
 }
 
+function buildScheduleEntriesForSave(days, { includeClearedFromRequest = null } = {}) {
+  const entries = (days || [])
+    .filter((day) => day.selected)
+    .map((day) => ({
+      date: day.date,
+      hours: normalizeHours(day.hours),
+      shiftType: normalizeShiftType(day.shiftType)
+    }));
+
+  if (!includeClearedFromRequest) {
+    return entries;
+  }
+
+  const selectedDates = new Set(entries.map((entry) => entry.date));
+  (includeClearedFromRequest.entries || [])
+    .filter((entry) => normalizeHours(entry.hours, 0) > 0)
+    .forEach((entry) => {
+      const date = getKsoRequestEntryDate(entry);
+      if (date && !selectedDates.has(date)) {
+        entries.push({
+          date,
+          hours: 0,
+          shiftType: ''
+        });
+      }
+    });
+
+  return entries;
+}
+
 function getScheduleRegionName() {
   const select = ksoScheduleForm?.scheduleRegion;
   return select?.selectedOptions?.[0]?.textContent?.trim() || '';
@@ -1441,11 +1487,7 @@ function renderKsoScheduleReviewPanel() {
         };
 
         if (payload.action === 'approved' && request.requestType !== 'removal') {
-          payload.entries = state.ksoScheduleReviewDays.map((day) => ({
-            date: day.date,
-            hours: day.selected ? normalizeHours(day.hours) : 0,
-            shiftType: day.selected ? normalizeShiftType(day.shiftType) : ''
-          }));
+          payload.entries = buildScheduleEntriesForSave(state.ksoScheduleReviewDays);
         }
 
         const result = await submitJson('/api/miniapp/kso-schedule/review', payload);
@@ -1465,11 +1507,9 @@ function renderKsoScheduleReviewPanel() {
     try {
       const result = await submitJson('/api/miniapp/kso-schedule/update-approved', {
         requestId: request.id,
-        entries: state.ksoScheduleReviewDays.map((day) => ({
-          date: day.date,
-          hours: day.selected ? normalizeHours(day.hours) : 0,
-          shiftType: day.selected ? normalizeShiftType(day.shiftType) : ''
-        })),
+        entries: buildScheduleEntriesForSave(state.ksoScheduleReviewDays, {
+          includeClearedFromRequest: request
+        }),
         shiftType: state.ksoScheduleReviewShiftType
       });
       setStatus(status, result.message, 'success');
@@ -1699,16 +1739,12 @@ async function saveKsoSchedule(statusMode = 'submitted') {
       status: statusMode,
       region: getScheduleRegionName(),
       shiftType: normalizeShiftType(ksoScheduleForm.shiftType?.value),
-      entries: state.ksoScheduleDays.map((day) => ({
-        date: day.date,
-        hours: day.selected ? normalizeHours(day.hours) : 0,
-        shiftType: day.selected ? normalizeShiftType(day.shiftType) : ''
-      }))
+      entries: buildScheduleEntriesForSave(state.ksoScheduleDays)
     });
     ksoScheduleForm.requestId.value = result.request?.id || '';
     await loadKsoScheduleMonth();
     await loadKsoScheduleRequests();
-    setStatus(status, result.message || 'График сохранен.', 'success');
+    setStatus(status, result.message || 'График обработан: сохранен или отправлен на согласование.', 'success');
   } catch (error) {
     setStatus(status, error.message, 'error');
   } finally {
@@ -1727,12 +1763,12 @@ async function requestRemoveTomorrowShift() {
       requestType: 'removal',
       entries: [{ date: tomorrow, hours: 0 }]
     });
-    setStatus(status, result.message || 'Заявка на снятие смены отправлена.', 'success');
+    setStatus(status, result.message || 'График обработан: заявка на снятие смены отправлена на согласование.', 'success');
     ksoScheduleForm.month.value = tomorrow.slice(0, 7);
     await loadKsoScheduleMonth();
     await loadKsoScheduleRequests();
     renderKsoApprovedSchedulePanel();
-    setStatus(status, result.message || 'Заявка на снятие смены отправлена.', 'success');
+    setStatus(status, result.message || 'График обработан: заявка на снятие смены отправлена на согласование.', 'success');
   } catch (error) {
     setStatus(status, error.message, 'error');
   }

@@ -1034,7 +1034,7 @@ async function updateScheduleStatus(userId, profile, isoDate, status) {
     await writeKsoScheduleStatus(profile, isoDate, status, historySheetName(isoDate));
     invalidateScheduleMonthSummary(isoDate);
     log('График КСО обновлен.', { userId, fio: profile.fio, isoDate, status });
-    return `Готово: на ${formatDisplayDate(isoDate)} установлен статус ${status}.`;
+    return `График обработан: на ${formatDisplayDate(isoDate)} установлен статус ${status}.`;
   } catch (error) {
     logError('Не удалось обновить график КСО:', error);
     return GOOGLE_SHEETS_ERROR_TEXT;
@@ -1047,7 +1047,7 @@ async function updateScheduleMonth(userId, profile, isoDateHours) {
     invalidateScheduleMonthSummary(isoDateHours[0].isoDate);
     const totalHours = isoDateHours.reduce((sum, item) => sum + numberValue(item.hours, 0), 0);
     log('Месячный график КСО обновлен.', { userId, fio: profile.fio, days: isoDateHours.length, totalHours });
-    return `Готово: график сохранен. Итого часов: ${totalHours}.`;
+    return `График обработан: сохранен. Итого часов: ${totalHours}.`;
   } catch (error) {
     logError('Не удалось обновить месячный график КСО:', error);
     return GOOGLE_SHEETS_ERROR_TEXT;

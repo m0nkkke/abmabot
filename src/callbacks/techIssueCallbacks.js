@@ -61,7 +61,7 @@ async function handleTechIssueCallback(update, chatId, userId, session, payload,
       await sendKeyboardMessage(
         chatId,
         userId,
-        '✅ Отчет ТН сохранен.',
+        '✅ Отчет обработан: сохранен.',
         repeatOrMenuAttachments('new_tech_report', '+ Новый отчет ТН')
       );
     } catch (error) {
