@@ -8,7 +8,6 @@ const TECH_REPORTS_SHEET_ID = process.env.GOOGLE_TECH_REPORTS_SHEET_ID || '';
 const BONUS_SHEET_ID = process.env.GOOGLE_BONUS_SHEET_ID || SHEET_ID;
 const KSO_ASSIGNMENT_SHEET_ID = process.env.GOOGLE_KSO_ASSIGNMENT_SHEET_ID || SHEET_ID;
 const CREDENTIALS_PATH = process.env.GOOGLE_CREDENTIALS_PATH || './credentials/service-account.json';
-const DATA_SHEET_NAME = 'Данные';
 const BONUS_SHEET_NAME = process.env.GOOGLE_BONUS_SHEET_NAME || 'Премии [данные]';
 const ONLINE_THEFT_SHEET_NAME = process.env.GOOGLE_ONLINE_THEFT_SHEET_NAME || 'Онлайн кражи';
 const REPORTS_SHEET_NAME = process.env.GOOGLE_REPORTS_SHEET_NAME || 'Отчеты';
@@ -1170,10 +1169,8 @@ async function appendRow(shop, row) {
     log('Google Sheets: начинаем запись строки.', { shop });
     const sheets = await getReadySheetsClient();
     await ensureShopSheet(sheets, shop);
-    await ensureShopSheet(sheets, DATA_SHEET_NAME);
 
     await writeRowToNextFreeLine(sheets, shop, row);
-    await writeRowToNextFreeLine(sheets, DATA_SHEET_NAME, row);
 
     log('Google Sheets: строка успешно записана.', { shop });
   } catch (error) {
@@ -1220,18 +1217,14 @@ async function replaceFixationRows(previousShop, nextShop, fixationId, rows) {
     }
 
     const sheets = await getReadySheetsClient();
-    await ensureShopSheet(sheets, DATA_SHEET_NAME);
     await ensureShopSheet(sheets, previousShop);
     await ensureShopSheet(sheets, nextShop);
 
-    const dataRows = await findFixationRows(sheets, DATA_SHEET_NAME, fixationId);
     const previousShopRows = await findFixationRows(sheets, previousShop, fixationId);
 
-    if (!dataRows.length || !previousShopRows.length) {
+    if (!previousShopRows.length) {
       throw new Error(`Не удалось найти редактируемую фиксацию ${fixationId} в Google Sheets`);
     }
-
-    await replaceRowsOnSheet(sheets, DATA_SHEET_NAME, dataRows, rows);
 
     if (previousShop === nextShop) {
       await replaceRowsOnSheet(sheets, previousShop, previousShopRows, rows);
