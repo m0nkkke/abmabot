@@ -40,16 +40,12 @@ const HEADER_END_COLUMN = columnNameByIndex(HEADERS.length);
 const DATA_RANGE = `A:${HEADER_END_COLUMN}`;
 const HEADER_RANGE = `A1:${HEADER_END_COLUMN}1`;
 const ONLINE_THEFT_HEADER_END_COLUMN = columnNameByIndex(ONLINE_THEFT_HEADERS.length);
-const ONLINE_THEFT_DATA_RANGE = `A:${ONLINE_THEFT_HEADER_END_COLUMN}`;
 const ONLINE_THEFT_HEADER_RANGE = `A1:${ONLINE_THEFT_HEADER_END_COLUMN}1`;
 const REPORT_HEADER_END_COLUMN = columnNameByIndex(REPORT_HEADERS.length);
-const REPORT_DATA_RANGE = `A:${REPORT_HEADER_END_COLUMN}`;
 const REPORT_HEADER_RANGE = `A1:${REPORT_HEADER_END_COLUMN}1`;
 const KSO_HEADER_END_COLUMN = columnNameByIndex(KSO_HEADERS.length);
-const KSO_DATA_RANGE = `A:${KSO_HEADER_END_COLUMN}`;
 const KSO_HEADER_RANGE = `A1:${KSO_HEADER_END_COLUMN}1`;
 const TECH_REPORT_HEADER_END_COLUMN = columnNameByIndex(TECH_REPORT_HEADERS.length);
-const TECH_REPORT_DATA_RANGE = `A:${TECH_REPORT_HEADER_END_COLUMN}`;
 const TECH_REPORT_HEADER_RANGE = `A1:${TECH_REPORT_HEADER_END_COLUMN}1`;
 const GOOGLE_REQUEST_TIMEOUT_MS = Number(process.env.GOOGLE_REQUEST_TIMEOUT_MS || 20000);
 const GOOGLE_REQUEST_RETRIES = Number(process.env.GOOGLE_REQUEST_RETRIES || 3);
@@ -627,17 +623,29 @@ async function ensureTechReportSheet(sheets) {
   );
 }
 
-function findNextDataRow(values) {
-  const rows = values || [];
+async function appendValuesRow(sheets, { spreadsheetId, sheetName, row, endColumn, description }) {
+  const escapedSheetName = escapeSheetName(sheetName);
+  log('Google Sheets: добавляем строку через append.', { sheetName });
 
-  for (let index = rows.length - 1; index >= 1; index -= 1) {
-    const hasData = (rows[index] || []).some((cell) => String(cell || '').trim() !== '');
-    if (hasData) {
-      return index + 2;
-    }
-  }
+  const response = await withTimeout(
+    sheets.spreadsheets.values.append({
+      spreadsheetId,
+      range: `'${escapedSheetName}'!A:${endColumn}`,
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      requestBody: {
+        values: [row]
+      }
+    }, {
+      timeout: GOOGLE_REQUEST_TIMEOUT_MS
+    }),
+    description
+  );
 
-  return 2;
+  log('Google Sheets: строка добавлена через append.', {
+    sheetName,
+    updatedRange: response.data?.updates?.updatedRange || ''
+  });
 }
 
 async function getSheetProperties(sheets, sheetName) {
@@ -915,70 +923,23 @@ async function ensureTechReportGridSize(sheets, minRows, minColumns = TECH_REPOR
 }
 
 async function writeRowToNextFreeLine(sheets, sheetName, row) {
-  const escapedSheetName = escapeSheetName(sheetName);
-  const valuesResponse = await withTimeout(
-    sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `'${escapedSheetName}'!${DATA_RANGE}`,
-      majorDimension: 'ROWS'
-    }, {
-      timeout: GOOGLE_REQUEST_TIMEOUT_MS
-    }),
-    `поиск свободной строки на листе ${sheetName}`
-  );
-
-  const nextRow = findNextDataRow(valuesResponse.data.values);
-  await ensureSheetGridSize(sheets, sheetName, nextRow, HEADERS.length);
-  log('Google Sheets: записываем строку в явный диапазон.', { sheetName, row: nextRow });
-
-  await withTimeout(
-    sheets.spreadsheets.values.update({
-      spreadsheetId: SHEET_ID,
-      range: `'${escapedSheetName}'!A${nextRow}:${HEADER_END_COLUMN}${nextRow}`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: {
-        values: [row]
-      }
-    }, {
-      timeout: GOOGLE_REQUEST_TIMEOUT_MS
-    }),
-    `запись строки ${nextRow} на лист ${sheetName}`
-  );
+  await appendValuesRow(sheets, {
+    spreadsheetId: SHEET_ID,
+    sheetName,
+    row,
+    endColumn: HEADER_END_COLUMN,
+    description: `append строки на лист ${sheetName}`
+  });
 }
 
 async function writeOnlineTheftRowToNextFreeLine(sheets, row) {
-  const escapedSheetName = escapeSheetName(ONLINE_THEFT_SHEET_NAME);
-  const valuesResponse = await withTimeout(
-    sheets.spreadsheets.values.get({
-      spreadsheetId: SHEET_ID,
-      range: `'${escapedSheetName}'!${ONLINE_THEFT_DATA_RANGE}`,
-      majorDimension: 'ROWS'
-    }, {
-      timeout: GOOGLE_REQUEST_TIMEOUT_MS
-    }),
-    `поиск свободной строки на листе ${ONLINE_THEFT_SHEET_NAME}`
-  );
-
-  const nextRow = findNextDataRow(valuesResponse.data.values);
-  await ensureSheetGridSize(sheets, ONLINE_THEFT_SHEET_NAME, nextRow, ONLINE_THEFT_HEADERS.length);
-  log('Google Sheets: записываем онлайн-кражу в явный диапазон.', {
+  await appendValuesRow(sheets, {
+    spreadsheetId: SHEET_ID,
     sheetName: ONLINE_THEFT_SHEET_NAME,
-    row: nextRow
+    row,
+    endColumn: ONLINE_THEFT_HEADER_END_COLUMN,
+    description: `append строки на лист ${ONLINE_THEFT_SHEET_NAME}`
   });
-
-  await withTimeout(
-    sheets.spreadsheets.values.update({
-      spreadsheetId: SHEET_ID,
-      range: `'${escapedSheetName}'!A${nextRow}:${ONLINE_THEFT_HEADER_END_COLUMN}${nextRow}`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: {
-        values: [row]
-      }
-    }, {
-      timeout: GOOGLE_REQUEST_TIMEOUT_MS
-    }),
-    `запись строки ${nextRow} на лист ${ONLINE_THEFT_SHEET_NAME}`
-  );
 }
 
 async function findFixationRows(sheets, sheetName, fixationId) {
@@ -1054,110 +1015,35 @@ async function deleteRecordRows(sheets, sheetName, rowNumbers) {
 
 async function writeTextReportToNextFreeLine(sheets, row, sheetName = REPORTS_SHEET_NAME) {
   const spreadsheetId = getReportsSheetId();
-  const escapedSheetName = escapeSheetName(sheetName);
-  const valuesResponse = await withTimeout(
-    sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `'${escapedSheetName}'!${REPORT_DATA_RANGE}`,
-      majorDimension: 'ROWS'
-    }, {
-      timeout: GOOGLE_REQUEST_TIMEOUT_MS
-    }),
-    `поиск свободной строки на листе ${sheetName}`
-  );
-
-  const nextRow = findNextDataRow(valuesResponse.data.values);
-  await ensureTextReportGridSize(sheets, nextRow, REPORT_HEADERS.length, sheetName);
-  log('Google Sheets: записываем текстовый отчет в явный диапазон.', {
+  await appendValuesRow(sheets, {
+    spreadsheetId,
     sheetName,
-    row: nextRow
+    row,
+    endColumn: REPORT_HEADER_END_COLUMN,
+    description: `append строки на лист ${sheetName}`
   });
-
-  await withTimeout(
-    sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: `'${escapedSheetName}'!A${nextRow}:${REPORT_HEADER_END_COLUMN}${nextRow}`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: {
-        values: [row]
-      }
-    }, {
-      timeout: GOOGLE_REQUEST_TIMEOUT_MS
-    }),
-    `запись строки ${nextRow} на лист ${sheetName}`
-  );
 }
 
 async function writeKsoReportToNextFreeLine(sheets, row) {
   const spreadsheetId = getReportsSheetId();
-  const escapedSheetName = escapeSheetName(KSO_SHEET_NAME);
-  const valuesResponse = await withTimeout(
-    sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `'${escapedSheetName}'!${KSO_DATA_RANGE}`,
-      majorDimension: 'ROWS'
-    }, {
-      timeout: GOOGLE_REQUEST_TIMEOUT_MS
-    }),
-    `поиск свободной строки на листе ${KSO_SHEET_NAME}`
-  );
-
-  const nextRow = findNextDataRow(valuesResponse.data.values);
-  await ensureKsoReportGridSize(sheets, nextRow, KSO_HEADERS.length);
-  log('Google Sheets: записываем отписку КСО в явный диапазон.', {
+  await appendValuesRow(sheets, {
+    spreadsheetId,
     sheetName: KSO_SHEET_NAME,
-    row: nextRow
+    row,
+    endColumn: KSO_HEADER_END_COLUMN,
+    description: `append строки на лист ${KSO_SHEET_NAME}`
   });
-
-  await withTimeout(
-    sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: `'${escapedSheetName}'!A${nextRow}:${KSO_HEADER_END_COLUMN}${nextRow}`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: {
-        values: [row]
-      }
-    }, {
-      timeout: GOOGLE_REQUEST_TIMEOUT_MS
-    }),
-    `запись строки ${nextRow} на лист ${KSO_SHEET_NAME}`
-  );
 }
 
 async function writeTechReportToNextFreeLine(sheets, row) {
   const spreadsheetId = getTechReportsSheetId();
-  const escapedSheetName = escapeSheetName(TECH_REPORTS_SHEET_NAME);
-  const valuesResponse = await withTimeout(
-    sheets.spreadsheets.values.get({
-      spreadsheetId,
-      range: `'${escapedSheetName}'!${TECH_REPORT_DATA_RANGE}`,
-      majorDimension: 'ROWS'
-    }, {
-      timeout: GOOGLE_REQUEST_TIMEOUT_MS
-    }),
-    `поиск свободной строки на листе ${TECH_REPORTS_SHEET_NAME}`
-  );
-
-  const nextRow = findNextDataRow(valuesResponse.data.values);
-  await ensureTechReportGridSize(sheets, nextRow, TECH_REPORT_HEADERS.length);
-  log('Google Sheets: записываем техническую неполадку в явный диапазон.', {
+  await appendValuesRow(sheets, {
+    spreadsheetId,
     sheetName: TECH_REPORTS_SHEET_NAME,
-    row: nextRow
+    row,
+    endColumn: TECH_REPORT_HEADER_END_COLUMN,
+    description: `append строки на лист ${TECH_REPORTS_SHEET_NAME}`
   });
-
-  await withTimeout(
-    sheets.spreadsheets.values.update({
-      spreadsheetId,
-      range: `'${escapedSheetName}'!A${nextRow}:${TECH_REPORT_HEADER_END_COLUMN}${nextRow}`,
-      valueInputOption: 'USER_ENTERED',
-      requestBody: {
-        values: [row]
-      }
-    }, {
-      timeout: GOOGLE_REQUEST_TIMEOUT_MS
-    }),
-    `запись строки ${nextRow} на лист ${TECH_REPORTS_SHEET_NAME}`
-  );
 }
 
 async function appendRow(shop, row) {
