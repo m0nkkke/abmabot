@@ -1,4 +1,4 @@
-const MAX_API_BASE_URL = 'https://platform-api.max.ru';
+const MAX_API_BASE_URL = process.env.MAX_API_BASE_URL || 'https://platform-api2.max.ru';
 const SHOP_BUTTONS_PER_ROW = 3;
 const SHOPS_PER_PAGE = 9;
 const MAX_PHOTOS_PER_RECORD = 10;
